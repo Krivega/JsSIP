@@ -295,4 +295,8 @@ export class RTCSession extends EventEmitter {
   resetLocalMedia(): void;
 
   on<T extends keyof RTCSessionEventMap>(type: T, listener: RTCSessionEventMap[T]): this;
+  
+  replaceMediaStream(stream: MediaStream, options?: { deleteExisting: boolean; addMissing: boolean; }): void;
+
+  presentation(isStart: boolean, streamPresentationCurrent: MediaStream, options: { isNeedReinvite: boolean; }): Promise<void>;
 }
