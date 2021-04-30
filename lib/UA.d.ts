@@ -44,6 +44,7 @@ export interface UAConfiguration {
   registrar_server?: string;
   use_preloaded_route?: boolean;
   user_agent?: string;
+  sdpSemantics?: 'plan-b' | 'unified-plan';
 }
 
 export interface IncomingRTCSessionEvent {
@@ -143,6 +144,8 @@ declare enum UAStatus {
 
 export class UA extends EventEmitter {
   static get C(): typeof UAStatus;
+
+  configuration: UAConfiguration;
 
   constructor(configuration: UAConfiguration);
 
