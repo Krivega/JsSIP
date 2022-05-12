@@ -238,7 +238,7 @@ declare enum SessionStatus {
   STATUS_CONFIRMED = 9
 }
 
-export class RTCSession extends EventEmitter {
+export default class RTCSession extends EventEmitter {
   static get C(): typeof SessionStatus;
 
   get C(): typeof SessionStatus;
@@ -302,7 +302,7 @@ export class RTCSession extends EventEmitter {
 
   on<T extends keyof RTCSessionEventMap>(type: T, listener: RTCSessionEventMap[T]): this;
 
-  replaceMediaStream(stream: MediaStream, options?: { deleteExisting: boolean; addMissing: boolean; }): Promise<void>;
+  replaceMediaStream(stream: MediaStream, options?: { deleteExisting: boolean; addMissing: boolean; forceRenegotiation: boolean; }): Promise<void>;
 
   startPresentation(stream: MediaStream, isNeedReinvite?: boolean): Promise<MediaStream>;
 
