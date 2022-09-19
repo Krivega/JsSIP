@@ -42,6 +42,8 @@ export interface AnswerOptions extends ExtraHeaders {
   rtcAnswerConstraints?: RTCOfferOptions;
   rtcOfferConstraints?: RTCOfferOptions;
   sessionTimersExpires?: number;
+  videoMode?: 'sendrecv'|'sendonly'|'recvonly';
+  audioMode?: 'sendrecv'|'sendonly'|'recvonly';
 }
 
 export interface RejectOptions extends ExtraHeaders {
@@ -164,7 +166,16 @@ export interface IceCandidateEvent {
 
 export interface OutgoingEvent {
   originator: Originator.REMOTE;
-  response: IncomingResponse
+  response: IncomingResponse;
+}
+
+export interface OutgoingAckEvent {
+  originator: Originator.LOCAL;
+}
+
+export interface IncomingAckEvent {
+  originator: Originator.REMOTE;
+  ack: IncomingRequest;
 }
 
 // listener
@@ -174,7 +185,10 @@ export type ConnectingListener = (event: ConnectingEvent) => void;
 export type SendingListener = (event: SendingEvent) => void;
 export type IncomingListener = (event: IncomingEvent) => void;
 export type OutgoingListener = (event: OutgoingEvent) => void;
+export type IncomingConfirmedListener = (event: IncomingAckEvent) => void;
+export type OutgoingConfirmedListener = (event: OutgoingAckEvent) => void;
 export type CallListener = IncomingListener | OutgoingListener;
+export type ConfirmedListener = IncomingConfirmedListener | OutgoingConfirmedListener;
 export type EndListener = (event: EndEvent) => void;
 export type IncomingDTMFListener = (event: IncomingDTMFEvent) => void;
 export type OutgoingDTMFListener = (event: OutgoingDTMFEvent) => void;
@@ -198,7 +212,7 @@ export interface RTCSessionEventMap {
   'sending': SendingListener;
   'progress': CallListener;
   'accepted': CallListener;
-  'confirmed': CallListener;
+  'confirmed': ConfirmedListener;
   'ended': EndListener;
   'failed': EndListener;
   'newDTMF': DTMFListener;
