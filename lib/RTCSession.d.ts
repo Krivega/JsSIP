@@ -1,10 +1,8 @@
-/// <reference types="node" />
-import {EventEmitter} from 'events'
-
-import {IncomingRequest, IncomingResponse, OutgoingRequest} from './SIPMessage'
-import {NameAddrHeader} from './NameAddrHeader'
-import {URI} from './URI'
-import {causes, DTMF_TRANSPORT} from './Constants'
+import { EventEmitter } from 'events'
+import { DTMF_TRANSPORT, causes } from './Constants'
+import NameAddrHeader from './NameAddrHeader'
+import { IncomingRequest, IncomingResponse, OutgoingRequest } from './SIPMessage'
+import URI from './URI'
 
 interface RTCPeerConnectionDeprecated extends RTCPeerConnection {
   /**
@@ -14,29 +12,26 @@ interface RTCPeerConnectionDeprecated extends RTCPeerConnection {
   getRemoteStreams(): MediaStream[];
 }
 
-export enum SessionDirection {
+export declare enum SessionDirection {
   INCOMING = 'incoming',
   OUTGOING = 'outgoing',
 }
 
-export enum Originator {
+export declare enum Originator {
   LOCAL = 'local',
   REMOTE = 'remote',
   SYSTEM = 'system',
 }
 
 // options
-export interface MediaConstraints {
-  audio?: boolean;
-  video?: boolean;
-}
-
 export interface ExtraHeaders {
   extraHeaders?: string[];
 }
 
+
+type TDegradationPreference = 'maintain-framerate'|'maintain-resolution'|'balanced';
 export interface AnswerOptions extends ExtraHeaders {
-  mediaConstraints?: MediaConstraints;
+  mediaConstraints?: MediaStreamConstraints;
   mediaStream?: MediaStream;
   pcConfig?: RTCConfiguration;
   rtcAnswerConstraints?: RTCOfferOptions;
@@ -44,6 +39,7 @@ export interface AnswerOptions extends ExtraHeaders {
   sessionTimersExpires?: number;
   videoMode?: 'sendrecv'|'sendonly'|'recvonly';
   audioMode?: 'sendrecv'|'sendonly'|'recvonly';
+  degradationPreference?: TDegradationPreference;
 }
 
 export interface RejectOptions extends ExtraHeaders {
@@ -178,8 +174,13 @@ export interface IncomingAckEvent {
   ack: IncomingRequest;
 }
 
+export interface MediaStreamTypes {
+  audio?: boolean;
+  video?: boolean;
+}
+
 // listener
-export type AnyListener = (...args: any[]) => void;
+export type GenericErrorListener = (error: any) => void;
 export type PeerConnectionListener = (event: PeerConnectionEvent) => void;
 export type ConnectingListener = (event: ConnectingEvent) => void;
 export type SendingListener = (event: SendingEvent) => void;
@@ -197,7 +198,7 @@ export type IncomingInfoListener = (event: IncomingInfoEvent) => void;
 export type OutgoingInfoListener = (event: OutgoingInfoEvent) => void;
 export type InfoListener = IncomingInfoListener | OutgoingInfoListener;
 export type HoldListener = (event: HoldEvent) => void;
-export type MuteListener = (event: MediaConstraints) => void;
+export type MuteListener = (event: MediaStreamTypes) => void;
 export type ReInviteListener = (event: ReInviteEvent) => void;
 export type UpdateListener = ReInviteListener;
 export type ReferListener = (event: ReferEvent) => void;
@@ -227,11 +228,11 @@ export interface RTCSessionEventMap {
   'replaces': ReferListener;
   'sdp': SDPListener;
   'icecandidate': IceCandidateListener;
-  'getusermediafailed': AnyListener;
-  'peerconnection:createofferfailed': AnyListener;
-  'peerconnection:createanswerfailed': AnyListener;
-  'peerconnection:setlocaldescriptionfailed': AnyListener;
-  'peerconnection:setremotedescriptionfailed': AnyListener;
+  'getusermediafailed': GenericErrorListener;
+  'peerconnection:createofferfailed': GenericErrorListener;
+  'peerconnection:createanswerfailed': GenericErrorListener;
+  'peerconnection:setlocaldescriptionfailed': GenericErrorListener;
+  'peerconnection:setremotedescriptionfailed': GenericErrorListener;
   'presentation:start': MediaStreamListener;
   'presentation:started': MediaStreamListener;
   'presentation:end': MediaStreamListener;
@@ -304,11 +305,11 @@ export default class RTCSession extends EventEmitter {
 
   isOnHold(): OnHoldResult;
 
-  mute(options?: MediaConstraints): void;
+  mute(options?: MediaStreamTypes): void;
 
-  unmute(options?: MediaConstraints): void;
+  unmute(options?: MediaStreamTypes): void;
 
-  isMuted(): MediaConstraints;
+  isMuted(): MediaStreamTypes;
 
   refer(target: string | URI, options?: ReferOptions): void;
 
@@ -316,9 +317,9 @@ export default class RTCSession extends EventEmitter {
 
   on<T extends keyof RTCSessionEventMap>(type: T, listener: RTCSessionEventMap[T]): this;
 
-  replaceMediaStream(stream: MediaStream, options?: { deleteExisting: boolean; addMissing: boolean; forceRenegotiation: boolean; }): Promise<void>;
+  replaceMediaStream(stream: MediaStream, options?: { deleteExisting: boolean; addMissing: boolean; forceRenegotiation: boolean; degradationPreference?: TDegradationPreference; }): Promise<void>;
 
-  startPresentation(stream: MediaStream, isNeedReinvite?: boolean): Promise<MediaStream>;
+  startPresentation(stream: MediaStream, isNeedReinvite?: boolean, degradationPreference?: TDegradationPreference ): Promise<MediaStream>;
 
   stopPresentation(stream: MediaStream): Promise<MediaStream>;
 }
