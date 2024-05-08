@@ -52,9 +52,12 @@ export interface RejectOptions extends ExtraHeaders {
   reason_phrase?: string;
 }
 
-export interface TerminateOptions extends RejectOptions {
+export interface TerminateAsyncOptions extends RejectOptions {
   body?: string;
   cause?: causes | string;
+}
+
+export interface TerminateOptions extends TerminateAsyncOptions {
   eventHandlers?: EventHandlers;
 }
 
@@ -299,7 +302,7 @@ export default class RTCSession extends EventEmitter {
 
   terminate(options?: TerminateOptions): void;
 
-  terminateAsync(options?: TerminateOptions): void;
+  terminateAsync(options?: TerminateAsyncOptions): Promise<void>;
 
   sendDTMF(tones: string | number, options?: DTFMOptions): void;
 
