@@ -1,9 +1,11 @@
-import {EventEmitter} from 'events'
+import { EventEmitter } from 'events'
+import { DTMF_TRANSPORT, causes } from './Constants'
+import NameAddrHeader from './NameAddrHeader'
+import { IncomingRequest, IncomingResponse, OutgoingRequest } from './SIPMessage'
+import URI from './URI'
 
-import {IncomingRequest, IncomingResponse, OutgoingRequest} from './SIPMessage'
-import {NameAddrHeader} from './NameAddrHeader'
-import {URI} from './URI'
-import {causes, DTMF_TRANSPORT} from './Constants'
+// Define VoidFunction type
+type VoidFunction = () => void;
 
 interface RTCPeerConnectionDeprecated extends RTCPeerConnection {
   /**
@@ -29,14 +31,26 @@ export interface ExtraHeaders {
   extraHeaders?: string[];
 }
 
+export interface EventHandlers {
+  succeeded?: () => void;
+  failed?: () => void;
+}
+
+type TDegradationPreference = 'maintain-framerate'|'maintain-resolution'|'balanced';
+type TOnAddedTransceiver = (transceiver: RTCRtpTransceiver, track: MediaStreamTrack, streams: MediaStream[]) => Promise<void>;
+
 export interface AnswerOptions extends ExtraHeaders {
   mediaConstraints?: MediaStreamConstraints;
   mediaStream?: MediaStream;
   pcConfig?: RTCConfiguration;
-  rtcConstraints?: object;
   rtcAnswerConstraints?: RTCOfferOptions;
   rtcOfferConstraints?: RTCOfferOptions;
   sessionTimersExpires?: number;
+  directionVideo?: RTCRtpTransceiverDirection;
+  directionAudio?: RTCRtpTransceiverDirection;
+  sendEncodings?: RTCRtpEncodingParameters[];
+  degradationPreference?: TDegradationPreference;
+  onAddedTransceiver?: TOnAddedTransceiver;
 }
 
 export interface RejectOptions extends ExtraHeaders {
@@ -44,9 +58,13 @@ export interface RejectOptions extends ExtraHeaders {
   reason_phrase?: string;
 }
 
-export interface TerminateOptions extends RejectOptions {
+export interface TerminateAsyncOptions extends RejectOptions {
   body?: string;
   cause?: causes | string;
+}
+
+export interface TerminateOptions extends TerminateAsyncOptions {
+  eventHandlers?: Partial<RTCSessionEventMap>;
 }
 
 export interface ReferOptions extends ExtraHeaders {
@@ -71,6 +89,26 @@ export interface HoldOptions extends ExtraHeaders {
 
 export interface RenegotiateOptions extends HoldOptions {
   rtcOfferConstraints?: RTCOfferOptions;
+  sendEncodings?: RTCRtpEncodingParameters[];
+  degradationPreference?: TDegradationPreference;
+}
+
+export interface ConnectOptions extends ExtraHeaders {
+  eventHandlers?: Partial<RTCSessionEventMap>;
+  mediaConstraints?: MediaStreamConstraints;
+  mediaStream?: MediaStream;
+  pcConfig?: RTCConfiguration;
+  rtcOfferConstraints?: RTCOfferOptions;
+  sessionTimersExpires?: number;
+  directionVideo?: RTCRtpTransceiverDirection;
+  directionAudio?: RTCRtpTransceiverDirection;
+  sendEncodings?: RTCRtpEncodingParameters[];
+  degradationPreference?: TDegradationPreference;
+  onAddedTransceiver?: TOnAddedTransceiver;
+  anonymous?: boolean;
+  fromUserName?: string;
+  fromDisplayName?: string;
+  data?: any;
 }
 
 // events
@@ -201,6 +239,8 @@ export type UpdateListener = ReInviteListener;
 export type ReferListener = (event: ReferEvent) => void;
 export type SDPListener = (event: SDPEvent) => void;
 export type IceCandidateListener = (event: IceCandidateEvent) => void;
+export type MediaStreamListener = (mediaStream: MediaStream) => void;
+export type ErrorListener = (error: Error) => void;
 
 export interface RTCSessionEventMap {
   'peerconnection': PeerConnectionListener;
@@ -228,6 +268,11 @@ export interface RTCSessionEventMap {
   'peerconnection:createanswerfailed': GenericErrorListener;
   'peerconnection:setlocaldescriptionfailed': GenericErrorListener;
   'peerconnection:setremotedescriptionfailed': GenericErrorListener;
+  'presentation:start': MediaStreamListener;
+  'presentation:started': MediaStreamListener;
+  'presentation:end': MediaStreamListener;
+  'presentation:ended': MediaStreamListener;
+  'presentation:failed': ErrorListener; 
 }
 
 declare enum SessionStatus {
@@ -243,7 +288,7 @@ declare enum SessionStatus {
   STATUS_CONFIRMED = 9
 }
 
-export class RTCSession extends EventEmitter {
+export default class RTCSession extends EventEmitter {
   static get C(): typeof SessionStatus;
 
   get C(): typeof SessionStatus;
@@ -277,22 +322,28 @@ export class RTCSession extends EventEmitter {
 
   isEnded(): boolean;
 
-  isReadyToReOffer(): boolean;
+  _isReadyToReOffer(): boolean;
+
+  connect(target: string | URI, options?: ConnectOptions, initCallback?: (session: RTCSession) => void): void;
 
   answer(options?: AnswerOptions): void;
 
   terminate(options?: TerminateOptions): void;
 
+  terminateAsync(options?: TerminateAsyncOptions): Promise<void>;
+
   sendDTMF(tones: string | number, options?: DTFMOptions): void;
 
-  sendInfo(contentType: string, body?: string, options?: ExtraHeaders): void;
+  sendInfo(contentType: string, body?: string, options?: ExtraHeaders & { noTerminateWhenError?: boolean }): Promise<void>;
 
   hold(options?: HoldOptions, done?: VoidFunction): boolean;
 
   unhold(options?: HoldOptions, done?: VoidFunction): boolean;
 
-  renegotiate(options?: RenegotiateOptions, done?: VoidFunction): boolean;
+  renegotiate(options?: RenegotiateOptions, done?: () => void, fail?: () => void): Promise<boolean>;
 
+  restartIce(options?: RenegotiateOptions, done?: () => void, fail?: () => void): Promise<boolean>;
+  
   isOnHold(): OnHoldResult;
 
   mute(options?: MediaStreamTypes): void;
@@ -302,8 +353,18 @@ export class RTCSession extends EventEmitter {
   isMuted(): MediaStreamTypes;
 
   refer(target: string | URI, options?: ReferOptions): void;
-
-  resetLocalMedia(): void;
-
+ 
   on<T extends keyof RTCSessionEventMap>(type: T, listener: RTCSessionEventMap[T]): this;
+
+  replaceMediaStream(stream: MediaStream, options?: { directionVideo?: RTCRtpTransceiverDirection; directionAudio?: RTCRtpTransceiverDirection; deleteExisting?: boolean; addMissing?: boolean; forceRenegotiation?: boolean; sendEncodings?: RTCRtpEncodingParameters[]; degradationPreference?: TDegradationPreference; onAddedTransceiver?: TOnAddedTransceiver; }): Promise<void>;
+
+  startPresentation(stream: MediaStream, isNeedReinvite?: boolean, options?: { direction?: RTCRtpTransceiverDirection; sendEncodings?: RTCRtpEncodingParameters[]; degradationPreference?: TDegradationPreference; onAddedTransceiver?: TOnAddedTransceiver}): Promise<MediaStream>;
+
+  stopPresentation(stream: MediaStream): Promise<MediaStream>;
+
+  addTransceiver(
+    trackOrKind: MediaStreamTrack | 'audio' | 'video',
+    init?: RTCRtpTransceiverInit,
+    options?: { degradationPreference?: TDegradationPreference }
+  ): Promise<RTCRtpTransceiver>;
 }
