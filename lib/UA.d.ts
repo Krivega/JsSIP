@@ -82,6 +82,12 @@ export interface DisconnectEvent {
   reason?: string;
 }
 
+export interface ReconnectionFailedEvent {
+  socket: Socket;
+  attempts: number;
+  error: boolean;
+}
+
 export interface RegisteredEvent {
   response: IncomingResponse;
 }
@@ -116,6 +122,7 @@ export interface OutgoingOptionsEvent {
 export type ConnectingListenerUA = (event: ConnectingEventUA) => void;
 export type ConnectedListener = (event: ConnectedEvent) => void;
 export type DisconnectedListener = (event: DisconnectEvent) => void;
+export type ReconnectionFailedListener = (event: ReconnectionFailedEvent) => void;
 export type RegisteredListener = (event: RegisteredEvent) => void;
 export type UnRegisteredListener = (event: UnRegisteredEvent) => void;
 export type RegistrationFailedListener = UnRegisteredListener;
@@ -135,6 +142,7 @@ export interface UAEventMap {
   connecting: ConnectingListenerUA;
   connected: ConnectedListener;
   disconnected: DisconnectedListener;
+  reconnectionFailed: ReconnectionFailedListener;
   registered: RegisteredListener;
   unregistered: UnRegisteredListener;
   registrationFailed: RegistrationFailedListener;
