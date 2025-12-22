@@ -1,16 +1,16 @@
-import {EventEmitter} from 'events'
+import { EventEmitter } from 'events';
 
-import {ExtraHeaders, Originator, OutgoingListener, SessionDirection, TerminateOptions} from './RTCSession'
-import {IncomingResponse} from './SIPMessage'
-import {NameAddrHeader} from './NameAddrHeader'
-import {causes} from './Constants';
+import { causes } from './Constants';
+import NameAddrHeader from './NameAddrHeader';
+import { ExtraHeaders, Originator, OutgoingListener, SessionDirection, TerminateOptions } from './RTCSession';
+import { IncomingResponse } from './SIPMessage';
 
 export interface AcceptOptions extends ExtraHeaders {
   body?: string;
 }
 
 export interface MessageFailedEvent {
-  originator: Originator;
+  originator: `${Originator}`;
   response: IncomingResponse;
   cause?: causes;
 }
@@ -29,7 +29,7 @@ export interface SendMessageOptions extends ExtraHeaders {
   fromDisplayName?: string;
 }
 
-export class Message extends EventEmitter {
+export default class Message extends EventEmitter {
   get direction(): SessionDirection;
 
   get local_identity(): NameAddrHeader;
