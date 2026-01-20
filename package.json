@@ -1,10 +1,15 @@
 {
   "name": "@krivega/jssip",
   "title": "JsSIP",
-  "version": "5.5.2",
   "description": "The Javascript SIP library",
-  "types": "lib/JsSIP.d.ts",
-  "main": "lib-es5/JsSIP.js",
+  "version": "5.5.2",
+  "contributors": [
+    "José Luis Millán <jmillan@aliax.net> (https://github.com/jmillan)",
+    "Iñaki Baz Castillo <ibc@aliax.net> (https://inakibaz.me)",
+    "Krivega Dmitriy <mr.krivega@gmail.com> (https://krivega.com)"
+  ],
+  "types": "src/JsSIP.d.ts",
+  "main": "src/JsSIP.js",
   "keywords": [
     "sip",
     "websocket",
