@@ -200,6 +200,9 @@ module.exports = class RTCSession extends EventEmitter
     this._rtcOfferConstraints = null;
     this._rtcAnswerConstraints = null;
 
+    // Optional function to transform remote SDP before creating RTCSessionDescription.
+    this._transformRemoteSdp = null;
+
     // Local MediaStream.
     this._localMediaStream = null;
     this._localMediaStreamLocallyGenerated = false;
@@ -396,6 +399,7 @@ module.exports = class RTCSession extends EventEmitter
 
     this._rtcOfferConstraints = rtcOfferConstraints;
     this._rtcAnswerConstraints = options.rtcAnswerConstraints || null;
+    this._transformRemoteSdp = options.transformRemoteSdp || null;
 
     this._data = options.data || this._data;
 
@@ -662,6 +666,7 @@ module.exports = class RTCSession extends EventEmitter
 
     this._rtcAnswerConstraints = rtcAnswerConstraints;
     this._rtcOfferConstraints = options.rtcOfferConstraints || null;
+    this._transformRemoteSdp = options.transformRemoteSdp || null;
 
     this._data = options.data || this._data;
 
@@ -866,7 +871,7 @@ module.exports = class RTCSession extends EventEmitter
         logger.debug('emit "sdp"');
         this.emit('sdp', e);
 
-        const offer = new RTCSessionDescription({ type: 'offer', sdp: e.sdp });
+        const offer = this._createRemoteDescription('offer', e.sdp);
 
         this._connectionPromiseQueue = this._connectionPromiseQueue
           .then(() => this._connection.setRemoteDescription(offer))
@@ -1868,7 +1873,7 @@ module.exports = class RTCSession extends EventEmitter
             logger.debug('emit "sdp"');
             this.emit('sdp', e);
 
-            const answer = new RTCSessionDescription({ type: 'answer', sdp: e.sdp });
+            const answer = this._createRemoteDescription('answer', e.sdp);
 
             this._connectionPromiseQueue = this._connectionPromiseQueue
               .then(() => this._connection.setRemoteDescription(answer))
@@ -2417,6 +2422,30 @@ module.exports = class RTCSession extends EventEmitter
   }
 
 
+  /**
+   * Helper method to create RTCSessionDescription with optional SDP transformation
+   */
+  _createRemoteDescription(type, sdp)
+  {
+    let transformedSdp = sdp;
+
+    if (this._transformRemoteSdp && typeof this._transformRemoteSdp === 'function')
+    {
+      try
+      {
+        transformedSdp = this._transformRemoteSdp(sdp, type);
+      }
+      catch (error)
+      {
+        logger.warn('transformRemoteSdp function error: %o', error);
+        // Use original SDP if transformation fails
+        transformedSdp = sdp;
+      }
+    }
+
+    return new RTCSessionDescription({ type, sdp: transformedSdp });
+  }
+
   _createRTCConnection(pcConfig)
   {
     const peerConnection = new RTCPeerConnection(
@@ -2931,7 +2960,7 @@ module.exports = class RTCSession extends EventEmitter
     logger.debug('emit "sdp"');
     this.emit('sdp', e);
 
-    const offer = new RTCSessionDescription({ type: 'offer', sdp: e.sdp });
+    const offer = this._createRemoteDescription('offer', e.sdp);
 
     this._connectionPromiseQueue = this._connectionPromiseQueue
       // Set remote description.
@@ -3436,7 +3465,7 @@ module.exports = class RTCSession extends EventEmitter
         logger.debug('emit "sdp"');
         this.emit('sdp', e);
 
-        const answer = new RTCSessionDescription({ type: 'answer', sdp: e.sdp });
+        const answer = this._createRemoteDescription('answer', e.sdp);
 
         this._connectionPromiseQueue = this._connectionPromiseQueue
           .then(() => this._connection.setRemoteDescription(answer))
@@ -3472,7 +3501,7 @@ module.exports = class RTCSession extends EventEmitter
         logger.debug('emit "sdp"');
         this.emit('sdp', e);
 
-        const answer = new RTCSessionDescription({ type: 'answer', sdp: e.sdp });
+        const answer = this._createRemoteDescription('answer', e.sdp);
 
         this._connectionPromiseQueue = this._connectionPromiseQueue
           .then(() =>
@@ -3589,7 +3618,7 @@ module.exports = class RTCSession extends EventEmitter
       logger.debug('emit "sdp"');
       this.emit('sdp', e);
 
-      const answer = new RTCSessionDescription({ type: 'answer', sdp: e.sdp });
+      const answer = this._createRemoteDescription('answer', e.sdp);
 
       return this._connection.setRemoteDescription(answer)
         .then(() =>
@@ -3726,7 +3755,7 @@ module.exports = class RTCSession extends EventEmitter
         logger.debug('emit "sdp"');
         this.emit('sdp', e);
 
-        const answer = new RTCSessionDescription({ type: 'answer', sdp: e.sdp });
+        const answer = this._createRemoteDescription('answer', e.sdp);
 
         return this._connection.setRemoteDescription(answer)
           .then(() =>

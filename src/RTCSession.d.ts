@@ -52,6 +52,7 @@ export interface AnswerOptions extends ExtraHeaders {
   sendEncodings?: RTCRtpEncodingParameters[];
   degradationPreference?: TDegradationPreference;
   onAddedTransceiver?: TOnAddedTransceiver;
+  transformRemoteSdp?: (sdp: string, type: 'offer' | 'answer') => string;
 }
 
 export interface RejectOptions extends ExtraHeaders {
@@ -110,6 +111,7 @@ export interface ConnectOptions extends ExtraHeaders {
   fromUserName?: string;
   fromDisplayName?: string;
   data?: any;
+  transformRemoteSdp?: (sdp: string, type: 'offer' | 'answer') => string;
 }
 
 // events
