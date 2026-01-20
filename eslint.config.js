@@ -111,7 +111,7 @@ module.exports = defineConfig([
             beforeLineComment: false,
         }],
 
-        "max-len": [2, 90, {
+        "max-len": [2, 120, {
             tabWidth: 2,
             comments: 110,
             ignoreUrls: true,

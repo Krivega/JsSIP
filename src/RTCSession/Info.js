@@ -27,64 +27,107 @@ module.exports = class Info extends EventEmitter
 
   send(contentType, body, options = {})
   {
-    this._direction = 'outgoing';
-
-    if (contentType === undefined)
+    return new Promise((resolve, reject) =>
     {
-      throw new TypeError('Not enough arguments');
-    }
+      const rejectWithError = (errorMessage) =>
+      {
+        reject(new Error(errorMessage));
+      };
 
-    // Check RTCSession Status.
-    if (this._session.status !== this._session.C.STATUS_CONFIRMED &&
-      this._session.status !== this._session.C.STATUS_WAITING_FOR_ACK)
-    {
-      throw new Exceptions.InvalidStateError(this._session.status);
-    }
+      this._direction = 'outgoing';
 
-    this._contentType = contentType;
-    this._body = body;
+      if (contentType === undefined)
+      {
+        return reject(new TypeError('Not enough arguments'));
+      }
 
-    const extraHeaders = Utils.cloneArray(options.extraHeaders);
+      // Check RTCSession Status.
+      if (this._session.status !== this._session.C.STATUS_CONFIRMED &&
+        this._session.status !== this._session.C.STATUS_WAITING_FOR_ACK)
+      {
+        return reject(new Exceptions.InvalidStateError(this._session.status));
+      }
 
-    extraHeaders.push(`Content-Type: ${contentType}`);
+      this._contentType = contentType;
+      this._body = body;
 
-    this._session.newInfo({
-      originator : 'local',
-      info       : this,
-      request    : this.request
-    });
+      const extraHeaders = Utils.cloneArray(options.extraHeaders);
 
-    this._session.sendRequest(JsSIP_C.INFO, {
-      extraHeaders,
-      eventHandlers : {
-        onSuccessResponse : (response) =>
-        {
-          this.emit('succeeded', {
-            originator : 'remote',
-            response
-          });
+      extraHeaders.push(`Content-Type: ${contentType}`);
+
+      this._session.newInfo({
+        originator : 'local',
+        info       : this,
+        request    : this.request
+      });
+
+      this._session.sendRequest(JsSIP_C.INFO, {
+        extraHeaders,
+        eventHandlers : {
+          onSuccessResponse : (response) =>
+          {
+            if (response.reason_phrase === 'OK')
+            {
+              resolve();
+              this.emit('succeeded', {
+                originator : 'remote',
+                response
+              });
+            }
+            else
+            {
+              rejectWithError('Not allowed');
+              this.emit('failed', {
+                originator : 'remote',
+                response
+              });
+            }
+          },
+          onErrorResponse : (response) =>
+          {
+            if (response.status_code === 603 && response.reason_phrase === 'Decline')
+            {
+              rejectWithError('Error decline with 603');
+            }
+            else
+            {
+              rejectWithError('Error response');
+            }
+            this.emit('failed', {
+              originator : 'remote',
+              response
+            });
+          },
+          onTransportError : () =>
+          {
+            rejectWithError('Transport response');
+
+            if (!options.noTerminateWhenError)
+            {
+              this._session.onTransportError();
+            }
+          },
+          onRequestTimeout : () =>
+          {
+            rejectWithError('Request timeout');
+
+            if (!options.noTerminateWhenError)
+            {
+              this._session.onRequestTimeout();
+            }
+          },
+          onDialogError : () =>
+          {
+            rejectWithError('Dialog error');
+
+            if (!options.noTerminateWhenError)
+            {
+              this._session.onDialogError();
+            }
+          }
         },
-        onErrorResponse : (response) =>
-        {
-          this.emit('failed', {
-            originator : 'remote',
-            response
-          });
-        },
-        onTransportError : () =>
-        {
-          this._session.onTransportError();
-        },
-        onRequestTimeout : () =>
-        {
-          this._session.onRequestTimeout();
-        },
-        onDialogError : () =>
-        {
-          this._session.onDialogError();
-        }
-      },
-      body
+        body
+      });
     });
   }
 

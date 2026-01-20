@@ -2,6 +2,7 @@
 /* globals RTCPeerConnection: false, RTCSessionDescription: false */
 
 const EventEmitter = require('events').EventEmitter;
+const { sequentPromises } = require('sequent-promises');
 const sdp_transform = require('sdp-transform');
 const Logger = require('./Logger');
 const JsSIP_C = require('./Constants');
@@ -38,6 +39,118 @@ const C = {
  * Local variables.
  */
 const holdMediaTypes = [ 'audio', 'video' ];
+
+const isFirefoxOrLower = (version) =>
+{
+  const userAgent = navigator.userAgent;
+  const firefoxMatch = userAgent.match(/Firefox\/(\d+)/);
+
+  if (firefoxMatch && firefoxMatch[1])
+  {
+    const firefoxVersion = parseInt(firefoxMatch[1], 10);
+
+
+    return firefoxVersion <= version;
+  }
+
+  return false;
+};
+
+
+const setEncodingsToSender = ({ sender, sendEncodings, degradationPreference }) =>
+{
+
+  if (!sendEncodings && !degradationPreference) return Promise.resolve();
+
+  const parametersCurrent = sender.getParameters() || {};
+
+  if (sendEncodings) parametersCurrent.encodings = sendEncodings;
+  if (degradationPreference) parametersCurrent.degradationPreference = degradationPreference;
+
+  return sender.setParameters(parametersCurrent);
+};
+
+// Применить параметры к sender (битрейт / degradation) при необходимости.
+const applySenderParams = ({ sender, sendEncodings, degradationPreference }) =>
+{
+  if (!sendEncodings && !degradationPreference) return Promise.resolve();
+
+  return setEncodingsToSender({ sender, sendEncodings, degradationPreference });
+};
+
+const IS_SUPPORT_ADD_TRANSCEIVER = !isFirefoxOrLower(109);
+
+
+const addTrackTransceiver = (
+  connection,
+  track,
+  streams,
+  {
+    directionAudio = 'sendrecv',
+    directionVideo = 'sendrecv',
+    sendEncodings,
+    degradationPreference
+  } = {}
+) =>
+{
+  const direction = track.kind === 'audio' ? directionAudio : directionVideo;
+
+  // 1. Создаём / получаем трансивер.
+  const transceiver = (() =>
+  {
+    if (IS_SUPPORT_ADD_TRANSCEIVER)
+    {
+      return connection.addTransceiver(track, { direction, sendEncodings, streams });
+    }
+
+    connection.addTrack(track, ...streams);
+
+    return connection.getTransceivers().find((t) => t.sender.track === track);
+  })();
+
+  // 2. Обновляем параметры отправки при необходимости.
+  if (direction !== 'recvonly')
+  {
+    return applySenderParams({
+      sender : transceiver.sender,
+      sendEncodings,
+      degradationPreference
+    }).then(() => transceiver);
+  }
+
+  // Если направление recvonly — параметров на отправку нет.
+  return Promise.resolve(transceiver);
+};
+
+
+const addMediaStreamInTransceiver = (connection, stream, action, {
+  directionAudio,
+  directionVideo,
+  sendEncodings,
+  degradationPreference = undefined,
+  onAddedTransceiver
+}) =>
+{
+  return Promise.all(stream[action]().map((track) =>
+  {
+    const streams = [ stream ];
+
+
+    return addTrackTransceiver(connection, track, streams, {
+      directionAudio,
+      directionVideo,
+      sendEncodings,
+      degradationPreference
+    })
+      .then((transceiver) =>
+      {
+        if (onAddedTransceiver)
+        {
+          return onAddedTransceiver(transceiver, track, streams);
+        }
+      });
+  }));
+};
 
 module.exports = class RTCSession extends EventEmitter
 {
@@ -87,6 +200,9 @@ module.exports = class RTCSession extends EventEmitter
     this._rtcOfferConstraints = null;
     this._rtcAnswerConstraints = null;
 
+    // Optional function to transform remote SDP before creating RTCSessionDescription.
+    this._transformRemoteSdp = null;
+
     // Local MediaStream.
     this._localMediaStream = null;
     this._localMediaStreamLocallyGenerated = false;
@@ -135,6 +251,8 @@ module.exports = class RTCSession extends EventEmitter
 
     // Custom session empty object for high level use.
     this._data = {};
+
+    this._presentationSenders = new Set();
   }
 
   /**
@@ -272,16 +390,16 @@ module.exports = class RTCSession extends EventEmitter
     const eventHandlers = Utils.cloneObject(options.eventHandlers);
     const extraHeaders = Utils.cloneArray(options.extraHeaders);
     const mediaConstraints = Utils.cloneObject(options.mediaConstraints, {
-      audio : true,
-      video : true
+      audio : options.directionAudio !== 'recvonly',
+      video : options.directionVideo !== 'recvonly'
     });
     const mediaStream = options.mediaStream || null;
     const pcConfig = Utils.cloneObject(options.pcConfig, { iceServers: [] });
-    const rtcConstraints = options.rtcConstraints || null;
     const rtcOfferConstraints = options.rtcOfferConstraints || null;
 
     this._rtcOfferConstraints = rtcOfferConstraints;
     this._rtcAnswerConstraints = options.rtcAnswerConstraints || null;
+    this._transformRemoteSdp = options.transformRemoteSdp || null;
 
     this._data = options.data || this._data;
 
@@ -381,7 +499,7 @@ module.exports = class RTCSession extends EventEmitter
     this._id = this._request.call_id + this._from_tag;
 
     // Create a new RTCPeerConnection instance.
-    this._createRTCConnection(pcConfig, rtcConstraints);
+    const peerConnection = this._createRTCConnection(pcConfig);
 
     // Set internal properties.
     this._direction = 'outgoing';
@@ -396,7 +514,28 @@ module.exports = class RTCSession extends EventEmitter
 
     this._newRTCSession('local', this._request);
 
-    this._sendInitialRequest(mediaConstraints, rtcOfferConstraints, mediaStream);
+
+    if (options.directionAudio === 'recvonly')
+    {
+      peerConnection.addTransceiver('audio', {
+        direction : 'recvonly'
+      });
+    }
+
+    if (options.directionVideo === 'recvonly')
+    {
+      peerConnection.addTransceiver('video', {
+        direction : 'recvonly'
+      });
+    }
+
+    this._sendInitialRequest(mediaConstraints, rtcOfferConstraints, mediaStream, {
+      sendEncodings         : options.sendEncodings,
+      degradationPreference : options.degradationPreference,
+      onAddedTransceiver    : options.onAddedTransceiver,
+      directionAudio        : options.directionAudio,
+      directionVideo        : options.directionVideo
+    });
   }
 
   init_incoming(request, initCallback)
@@ -516,7 +655,6 @@ module.exports = class RTCSession extends EventEmitter
     const mediaConstraints = Utils.cloneObject(options.mediaConstraints);
     const mediaStream = options.mediaStream || null;
     const pcConfig = Utils.cloneObject(options.pcConfig, { iceServers: [] });
-    const rtcConstraints = options.rtcConstraints || null;
     const rtcAnswerConstraints = options.rtcAnswerConstraints || null;
     const rtcOfferConstraints = Utils.cloneObject(options.rtcOfferConstraints);
 
@@ -528,6 +666,7 @@ module.exports = class RTCSession extends EventEmitter
 
     this._rtcAnswerConstraints = rtcAnswerConstraints;
     this._rtcOfferConstraints = options.rtcOfferConstraints || null;
+    this._transformRemoteSdp = options.transformRemoteSdp || null;
 
     this._data = options.data || this._data;
 
@@ -649,7 +788,21 @@ module.exports = class RTCSession extends EventEmitter
 
     // Create a new RTCPeerConnection instance.
     // TODO: This may throw an error, should react.
-    this._createRTCConnection(pcConfig, rtcConstraints);
+    const peerConnection = this._createRTCConnection(pcConfig);
+
+    if (options.directionAudio === 'recvonly')
+    {
+      peerConnection.addTransceiver('audio', {
+        direction : 'recvonly'
+      });
+    }
+
+    if (options.directionVideo === 'recvonly')
+    {
+      peerConnection.addTransceiver('video', {
+        direction : 'recvonly'
+      });
+    }
 
     Promise.resolve()
       // Handle local MediaStream.
@@ -696,9 +849,12 @@ module.exports = class RTCSession extends EventEmitter
         this._localMediaStream = stream;
         if (stream)
         {
-          stream.getTracks().forEach((track) =>
-          {
-            this._connection.addTrack(track, stream);
+          return this._addMediaStreamInSender(stream, 'getTracks', {
+            sendEncodings         : options.sendEncodings,
+            degradationPreference : options.degradationPreference,
+            onAddedTransceiver    : options.onAddedTransceiver,
+            directionAudio        : options.directionAudio,
+            directionVideo        : options.directionVideo
           });
         }
       })
@@ -715,7 +871,7 @@ module.exports = class RTCSession extends EventEmitter
         logger.debug('emit "sdp"');
         this.emit('sdp', e);
 
-        const offer = new RTCSessionDescription({ type: 'offer', sdp: e.sdp });
+        const offer = this._createRemoteDescription('offer', e.sdp);
 
         this._connectionPromiseQueue = this._connectionPromiseQueue
           .then(() => this._connection.setRemoteDescription(offer))
@@ -814,6 +970,7 @@ module.exports = class RTCSession extends EventEmitter
 
     const cause = options.cause || JsSIP_C.causes.BYE;
     const extraHeaders = Utils.cloneArray(options.extraHeaders);
+    const eventHandlers = Utils.cloneObject(options.eventHandlers);
     const body = options.body;
 
     let cancel_reason;
@@ -858,6 +1015,12 @@ module.exports = class RTCSession extends EventEmitter
         this._status = C.STATUS_CANCELED;
 
         this._failed('local', null, JsSIP_C.causes.CANCELED);
+
+        if (eventHandlers.succeeded)
+        {
+          eventHandlers.succeeded();
+        }
+
         break;
 
         // - UAS -
@@ -874,6 +1037,12 @@ module.exports = class RTCSession extends EventEmitter
 
         this._request.reply(status_code, reason_phrase, extraHeaders, body);
         this._failed('local', null, JsSIP_C.causes.REJECTED);
+
+        if (eventHandlers.succeeded)
+        {
+          eventHandlers.succeeded();
+        }
+
         break;
 
       case C.STATUS_WAITING_FOR_ACK:
@@ -915,6 +1084,11 @@ module.exports = class RTCSession extends EventEmitter
                 body
               });
               dialog.terminate();
+
+              if (eventHandlers.succeeded)
+              {
+                eventHandlers.succeeded();
+              }
             }
           };
 
@@ -929,6 +1103,11 @@ module.exports = class RTCSession extends EventEmitter
                 body
               });
               dialog.terminate();
+
+              if (eventHandlers.succeeded)
+              {
+                eventHandlers.succeeded();
+              }
             }
           });
 
@@ -948,8 +1127,31 @@ module.exports = class RTCSession extends EventEmitter
           });
 
           this._ended('local', null, cause);
+
+          if (eventHandlers.succeeded)
+          {
+            eventHandlers.succeeded();
+          }
         }
     }
+  }
+
+  terminateAsync(options = {})
+  {
+    logger.debug('terminateAsync()');
+
+    return new Promise((resolve, reject) =>
+    {
+      const eventHandlers = {
+        succeeded : () =>
+        {
+          resolve(undefined);
+        }
+      };
+
+      try { this.terminate(Object.assign({}, options, { eventHandlers })); }
+      catch (error) { reject(error); }
+    });
   }
 
   sendDTMF(tones, options = {})
@@ -966,11 +1168,7 @@ module.exports = class RTCSession extends EventEmitter
     }
 
     // Check Session Status.
-    if (
-      this._status !== C.STATUS_CONFIRMED &&
-      this._status !== C.STATUS_WAITING_FOR_ACK &&
-      this._status !== C.STATUS_1XX_RECEIVED
-    )
+    if (this._status !== C.STATUS_CONFIRMED && this._status !== C.STATUS_WAITING_FOR_ACK)
     {
       throw new Exceptions.InvalidStateError(this._status);
     }
@@ -1114,18 +1312,14 @@ module.exports = class RTCSession extends EventEmitter
     logger.debug('sendInfo()');
 
     // Check Session Status.
-    if (
-      this._status !== C.STATUS_CONFIRMED &&
-      this._status !== C.STATUS_WAITING_FOR_ACK &&
-      this._status !== C.STATUS_1XX_RECEIVED
-    )
+    if (this._status !== C.STATUS_CONFIRMED && this._status !== C.STATUS_WAITING_FOR_ACK)
     {
-      throw new Exceptions.InvalidStateError(this._status);
+      return Promise.reject(new Exceptions.InvalidStateError(this._status));
     }
 
     const info = new RTCSession_Info(this);
 
-    info.send(contentType, body, options);
+    return info.send(contentType, body, options);
   }
 
   /**
@@ -1315,58 +1509,234 @@ module.exports = class RTCSession extends EventEmitter
     return true;
   }
 
-  renegotiate(options = {}, done)
+  renegotiate(options = {}, done, fail)
   {
-    logger.debug('renegotiate()');
 
-    const rtcOfferConstraints = options.rtcOfferConstraints || null;
-
-    if (this._status !== C.STATUS_WAITING_FOR_ACK && this._status !== C.STATUS_CONFIRMED)
+    return new Promise((resolve, reject) =>
     {
-      return false;
-    }
+      logger.debug('renegotiate()');
 
-    if (!this.isReadyToReOffer())
-    {
-      return false;
-    }
+      const rtcOfferConstraints = options.rtcOfferConstraints || null;
 
-    const eventHandlers = {
-      succeeded : () =>
+      if (this._status !== C.STATUS_WAITING_FOR_ACK && this._status !== C.STATUS_CONFIRMED)
       {
-        if (done) { done(); }
-      },
-      failed : () =>
+        resolve(false);
+
+        return false;
+      }
+
+      if (!this.isReadyToReOffer())
       {
-        this.terminate({
-          cause         : JsSIP_C.causes.WEBRTC_ERROR,
-          status_code   : 500,
-          reason_phrase : 'Media Renegotiation Failed'
+        resolve(false);
+
+        return false;
+      }
+
+      const eventHandlers = {
+        succeeded : () =>
+        {
+          if (done) { done(); }
+          resolve(true);
+        },
+        failed : () =>
+        {
+          this.terminate({
+            cause         : JsSIP_C.causes.WEBRTC_ERROR,
+            status_code   : 500,
+            reason_phrase : 'Media Renegotiation Failed'
+          });
+          if (fail) { fail(); }
+          reject();
+        }
+      };
+
+      this._setLocalMediaStatus();
+
+      if (options.useUpdate)
+      {
+        this._sendUpdate({
+          sdpOffer     : true,
+          eventHandlers,
+          rtcOfferConstraints,
+          extraHeaders : options.extraHeaders
         });
       }
-    };
+      else
+      {
+        this._sendReinvite({
+          eventHandlers,
+          rtcOfferConstraints,
+          extraHeaders : options.extraHeaders
+        });
+      }
+    });
+  }
 
-    this._setLocalMediaStatus();
+  // Add ICE restart helper that leverages renegotiation with the iceRestart constraint.
+  restartIce(options = {}, done, fail)
+  {
+    logger.debug('restartIce()');
 
-    if (options.useUpdate)
+    // Ensure iceRestart constraint is enabled.
+    const newOptions = Object.assign({}, options, {
+      rtcOfferConstraints : Object.assign({}, options.rtcOfferConstraints, { iceRestart: true })
+    });
+
+    return this.renegotiate(newOptions, done, fail);
+  }
+
+  _getSenderByKindTrack(track)
+  {
+    return this._connection.getSenders().find((sender) =>
     {
-      this._sendUpdate({
-        sdpOffer     : true,
-        eventHandlers,
-        rtcOfferConstraints,
-        extraHeaders : options.extraHeaders
-      });
-    }
-    else
-    {
-      this._sendReinvite({
-        eventHandlers,
-        rtcOfferConstraints,
-        extraHeaders : options.extraHeaders
-      });
-    }
+      return sender.track && sender.track.kind == track.kind;
+    });
+  }
 
-    return true;
+  _getSenderByTrack(track)
+  {
+    return this._connection.getSenders().find((sender) =>
+    {
+      return sender.track == track;
+    });
+  }
+
+  replaceMediaStream(stream, {
+    directionVideo = undefined,
+    directionAudio = undefined,
+    deleteExisting = true,
+    addMissing = true,
+    forceRenegotiation = false,
+    sendEncodings = undefined,
+    degradationPreference = undefined,
+    onAddedTransceiver = undefined
+  } = {})
+  {
+    logger.debug('replaceMediaStream()');
+
+    let isChangedCountSenders = false;
+
+    const sequentReplaceTracks = stream.getTracks().map((track) => () =>
+    {
+      const sender = this._getSenderByKindTrack(track);
+
+      if (sender && sender.track !== track)
+      {
+        return sender.replaceTrack(track);
+      }
+
+      if (!sender && addMissing)
+      {
+        isChangedCountSenders = true;
+
+        const streams = [ stream ];
+
+        return addTrackTransceiver(this._connection, track, streams, {
+          directionAudio,
+          directionVideo,
+          sendEncodings,
+          degradationPreference
+        }).then((transceiver) =>
+        {
+          if (onAddedTransceiver)
+          {
+            return onAddedTransceiver(transceiver, track, streams);
+          }
+
+          return;
+        });
+      }
+
+      return Promise.resolve();
+    });
+
+    return sequentPromises(sequentReplaceTracks).then(
+      () =>
+      {
+        if (deleteExisting)
+        {
+          isChangedCountSenders = this._removeMediaStream(this._localMediaStream) || isChangedCountSenders;
+        }
+
+        this._localMediaStream = stream;
+
+        if (forceRenegotiation || isChangedCountSenders)
+        {
+          return this.renegotiate();
+        }
+      }
+    );
+
+  }
+
+  _addMediaStreamInTransceiver(stream, action, {
+    directionAudio,
+    directionVideo,
+    sendEncodings,
+    degradationPreference = undefined,
+    onAddedTransceiver
+  })
+  {
+    return addMediaStreamInTransceiver(this._connection, stream, action, {
+      directionAudio,
+      directionVideo,
+      sendEncodings,
+      degradationPreference,
+      onAddedTransceiver
+    });
+  }
+
+  _addMediaStreamInSender(stream, action, {
+    directionAudio,
+    directionVideo,
+    sendEncodings,
+    degradationPreference = undefined,
+    onAddedTransceiver
+  })
+  {
+    return Promise.all(stream[action]().map((track) =>
+    {
+      const direction = track.kind === 'audio' ? directionAudio : directionVideo;
+      const sender = this._connection.addTrack(track, stream);
+      const transceiver = this._connection.getTransceivers().find((itemTransceiver) =>
+      {
+        return itemTransceiver.sender === sender;
+      });
+
+      if (transceiver && direction !== transceiver.direction)
+      {
+        if (transceiver.setDirection) transceiver.setDirection(direction);
+        else transceiver.direction = direction;
+      }
+
+      return setEncodingsToSender({ sender, sendEncodings, degradationPreference }).then(() =>
+      {
+
+        if (onAddedTransceiver && transceiver)
+        {
+          return onAddedTransceiver(transceiver, track, stream);
+        }
+
+        return Promise.resolve();
+      });
+    }));
+  }
+
+  _removeMediaStream(stream)
+  {
+    const sendersBySteam = this._connection.getSenders()
+      .filter((sender) =>
+      {
+        return sender.track && stream.getTracks().includes(sender.track);
+      });
+    const isChangedConnection = sendersBySteam.length > 0;
+
+    sendersBySteam.forEach((sender) =>
+    {
+      this._connection.removeTrack(sender);
+    });
+
+    return isChangedConnection;
   }
 
   /**
@@ -1503,7 +1873,7 @@ module.exports = class RTCSession extends EventEmitter
             logger.debug('emit "sdp"');
             this.emit('sdp', e);
 
-            const answer = new RTCSessionDescription({ type: 'answer', sdp: e.sdp });
+            const answer = this._createRemoteDescription('answer', e.sdp);
 
             this._connectionPromiseQueue = this._connectionPromiseQueue
               .then(() => this._connection.setRemoteDescription(answer))
@@ -1693,6 +2063,194 @@ module.exports = class RTCSession extends EventEmitter
     this.emit('newInfo', data);
   }
 
+  _addOrReplacePresentationMediaStream(
+    stream,
+    {
+      directionAudio,
+      directionVideo,
+      degradationPreference,
+      sendEncodings,
+      onAddedTransceiver
+    } = {}
+  )
+  {
+    const senders = this._connection.getSenders();
+    const presentationSenders = senders.filter((sender) =>
+    {
+      return this._hasPresentationSender(sender);
+    });
+
+    const isExistPresentationSender = presentationSenders.length > 0;
+
+    if (isExistPresentationSender)
+    {
+      stream.getVideoTracks().forEach((track, index) =>
+      {
+        const sender = presentationSenders[index];
+
+        sender.replaceTrack(track);
+      });
+
+      return Promise.resolve();
+    }
+    else
+    {
+      const transceivers = this._connection.getTransceivers();
+      const isExistRecvOnlyTransceiver = transceivers.some((itemTransceiver) =>
+      {
+        return itemTransceiver.currentDirection === 'recvonly';
+      });
+
+      if (isExistRecvOnlyTransceiver)
+      {
+        return this._addMediaStreamInSender(stream, 'getVideoTracks', {
+          sendEncodings,
+          degradationPreference,
+          onAddedTransceiver,
+          directionAudio,
+          directionVideo
+        });
+      }
+
+      return this._addMediaStreamInTransceiver(stream, 'getVideoTracks', {
+        sendEncodings,
+        degradationPreference,
+        onAddedTransceiver,
+        directionAudio,
+        directionVideo
+      });
+    }
+  }
+
+  _markPresentationStream(stream)
+  {
+    stream.getTracks().forEach((track) =>
+    {
+      const sender = this._getSenderByTrack(track);
+
+      if (sender)
+      {
+        this._presentationSenders.add(sender);
+      }
+    });
+  }
+
+  _hasPresentationSender(sender)
+  {
+    return this._presentationSenders.has(sender);
+  }
+
+  _stopPresentationTracks()
+  {
+    this._forEachSenders((sender) =>
+    {
+      if (sender.track && this._hasPresentationSender(sender))
+      {
+        sender.track.stop();
+      }
+    });
+  }
+
+  startPresentation(stream, isNeedReinvite=true, {
+    direction = undefined,
+    sendEncodings = undefined,
+    degradationPreference = undefined,
+    onAddedTransceiver = undefined
+  }={})
+  {
+    logger.debug('presentation()');
+
+    return new Promise((resolve, reject) =>
+    {
+      const rejectWithError = (errorMessage) =>
+      {
+        this.emit('presentation:failed', new Error(errorMessage));
+        reject(new Error(errorMessage));
+      };
+
+      if (!stream)
+      {
+        rejectWithError('Wrong mediaStream');
+      }
+
+      this.emit('presentation:start', stream);
+
+      const resolveSuccess = () =>
+      {
+        this.emit('presentation:started', stream);
+
+        resolve(stream);
+      };
+
+      Promise.resolve().then(() =>
+      {
+        return this._addOrReplacePresentationMediaStream(stream, {
+          sendEncodings,
+          degradationPreference,
+          onAddedTransceiver,
+          directionVideo : direction,
+          directionAudio : undefined
+        });
+      })
+        .then(() =>
+        {
+          this._markPresentationStream(stream);
+
+          if (isNeedReinvite)
+          {
+            this.renegotiate().then(resolveSuccess)
+              .catch(() =>
+              {
+
+                this._stopPresentationTracks();
+
+                rejectWithError('Fail reInvite');
+              });
+
+          }
+          else
+          {
+            resolveSuccess();
+          }
+        })
+        .catch(() =>
+        {
+          rejectWithError('Wrong mediaStream');
+        });
+    });
+  }
+
+  stopPresentation(stream)
+  {
+    logger.debug('presentation()');
+
+    return new Promise((resolve, reject) =>
+    {
+      const rejectWithError = (errorMessage) =>
+      {
+        this.emit('presentation:failed', new Error(errorMessage));
+        reject(new Error(errorMessage));
+      };
+
+      if (!stream)
+      {
+        rejectWithError('Wrong mediaStream');
+      }
+
+      this.emit('presentation:end', stream);
+
+      const resolveSuccess = () =>
+      {
+        this.emit('presentation:ended', stream);
+
+        resolve(stream);
+      };
+
+      this._stopPresentationTracks();
+      resolveSuccess();
+    });
+  }
+
   /**
    * Check if RTCSession is ready for an outgoing re-INVITE or UPDATE with SDP.
    */
@@ -1798,6 +2356,8 @@ module.exports = class RTCSession extends EventEmitter
     }
 
     this._ua.destroyRTCSession(this);
+
+    this._presentationSenders.clear();
   }
 
   /**
@@ -1811,7 +2371,8 @@ module.exports = class RTCSession extends EventEmitter
    */
   _setInvite2xxTimer(request, body)
   {
-    let timeout = Timers.T1;
+    const firstTimeout = Timers.T1Udp;
+    let timeout = firstTimeout;
 
     function invite2xxRetransmission()
     {
@@ -1822,12 +2383,12 @@ module.exports = class RTCSession extends EventEmitter
 
       request.reply(200, null, [ `Contact: ${this._contact}` ], body);
 
-      if (timeout < Timers.T2)
+      if (timeout < Timers.T2Udp)
       {
         timeout = timeout * 2;
-        if (timeout > Timers.T2)
+        if (timeout > Timers.T2Udp)
         {
-          timeout = Timers.T2;
+          timeout = Timers.T2Udp;
         }
       }
 
@@ -1836,7 +2397,7 @@ module.exports = class RTCSession extends EventEmitter
     }
 
     this._timers.invite2xxTimer = setTimeout(
-      invite2xxRetransmission.bind(this), timeout);
+      invite2xxRetransmission.bind(this), firstTimeout);
   }
 
 
@@ -1861,22 +2422,47 @@ module.exports = class RTCSession extends EventEmitter
   }
 
 
-  _createRTCConnection(pcConfig, rtcConstraints)
+  /**
+   * Helper method to create RTCSessionDescription with optional SDP transformation
+   */
+  _createRemoteDescription(type, sdp)
   {
-    this._connection = new RTCPeerConnection(
+    let transformedSdp = sdp;
+
+    if (this._transformRemoteSdp && typeof this._transformRemoteSdp === 'function')
+    {
+      try
+      {
+        transformedSdp = this._transformRemoteSdp(sdp, type);
+      }
+      catch (error)
+      {
+        logger.warn('transformRemoteSdp function error: %o', error);
+        // Use original SDP if transformation fails
+        transformedSdp = sdp;
+      }
+    }
+
+    return new RTCSessionDescription({ type, sdp: transformedSdp });
+  }
+
+  _createRTCConnection(pcConfig)
+  {
+    const peerConnection = new RTCPeerConnection(
       Object.assign(
         {},
         pcConfig,
         {
-          sdpSemantics : 'plan-b'
+          sdpSemantics : 'unified-plan'
         }
-      ),
-      rtcConstraints
+      )
     );
 
-    this._connection.addEventListener('iceconnectionstatechange', () =>
+    this._connection = peerConnection;
+
+    peerConnection.addEventListener('iceconnectionstatechange', () =>
     {
-      const state = this._connection.iceConnectionState;
+      const state = peerConnection.iceConnectionState;
 
       // TODO: Do more with different states.
       if (state === 'failed')
@@ -1892,8 +2478,10 @@ module.exports = class RTCSession extends EventEmitter
     logger.debug('emit "peerconnection"');
 
     this.emit('peerconnection', {
-      peerconnection : this._connection
+      peerconnection : peerConnection
     });
+
+    return peerConnection;
   }
 
   _createLocalDescription(type, constraints)
@@ -1981,11 +2569,14 @@ module.exports = class RTCSession extends EventEmitter
           let finished = false;
           let iceCandidateListener;
           let iceGatheringStateListener;
+          let myCandidateTimeout;
 
           this._iceReady = false;
 
+
           const ready = () =>
           {
+            clearTimeout(myCandidateTimeout);
             if (finished)
             {
               return;
@@ -2019,6 +2610,11 @@ module.exports = class RTCSession extends EventEmitter
                 candidate,
                 ready
               });
+
+              clearTimeout(myCandidateTimeout);
+
+              // 2 seconds timeout after the last icecandidate received!
+              myCandidateTimeout = setTimeout(ready, 2000);
             }
             else
             {
@@ -2158,6 +2754,33 @@ module.exports = class RTCSession extends EventEmitter
       return;
     }
 
+    const sendAnswer = (desc) =>
+    {
+      const extraHeaders = [ `Contact: ${this._contact}` ];
+
+      this._handleSessionTimersInIncomingRequest(request, extraHeaders);
+
+      if (this._late_sdp)
+      {
+        desc = this._mangleOffer(desc);
+      }
+
+      request.reply(200, null, extraHeaders, desc,
+        () =>
+        {
+          this._status = C.STATUS_WAITING_FOR_ACK;
+          this._setInvite2xxTimer(request, desc);
+          this._setACKTimer();
+        }
+      );
+
+      // If callback is given execute it.
+      if (typeof data.callback === 'function')
+      {
+        data.callback();
+      }
+    };
+
     this._late_sdp = false;
 
     // Request without SDP.
@@ -2207,33 +2830,6 @@ module.exports = class RTCSession extends EventEmitter
       {
         logger.warn(error);
       });
-
-    function sendAnswer(desc)
-    {
-      const extraHeaders = [ `Contact: ${this._contact}` ];
-
-      this._handleSessionTimersInIncomingRequest(request, extraHeaders);
-
-      if (this._late_sdp)
-      {
-        desc = this._mangleOffer(desc);
-      }
-
-      request.reply(200, null, extraHeaders, desc,
-        () =>
-        {
-          this._status = C.STATUS_WAITING_FOR_ACK;
-          this._setInvite2xxTimer(request, desc);
-          this._setACKTimer();
-        }
-      );
-
-      // If callback is given execute it.
-      if (typeof data.callback === 'function')
-      {
-        data.callback();
-      }
-    }
   }
 
   /**
@@ -2364,7 +2960,7 @@ module.exports = class RTCSession extends EventEmitter
     logger.debug('emit "sdp"');
     this.emit('sdp', e);
 
-    const offer = new RTCSessionDescription({ type: 'offer', sdp: e.sdp });
+    const offer = this._createRemoteDescription('offer', e.sdp);
 
     this._connectionPromiseQueue = this._connectionPromiseQueue
       // Set remote description.
@@ -2621,7 +3217,13 @@ module.exports = class RTCSession extends EventEmitter
   /**
    * Initial Request Sender
    */
-  _sendInitialRequest(mediaConstraints, rtcOfferConstraints, mediaStream)
+  _sendInitialRequest(mediaConstraints, rtcOfferConstraints, mediaStream, {
+    sendEncodings,
+    degradationPreference,
+    onAddedTransceiver,
+    directionAudio,
+    directionVideo
+  })
   {
     const request_sender = new RequestSender(this._ua, this._request, {
       onRequestTimeout : () =>
@@ -2688,12 +3290,18 @@ module.exports = class RTCSession extends EventEmitter
 
         if (stream)
         {
-          stream.getTracks().forEach((track) =>
-          {
-            this._connection.addTrack(track, stream);
+          return this._addMediaStreamInTransceiver(stream, 'getTracks', {
+            directionAudio,
+            directionVideo,
+            sendEncodings,
+            degradationPreference,
+            onAddedTransceiver
           });
         }
 
+      })
+      .then(() =>
+      {
         // TODO: should this be triggered here?
         this._connecting(this._request);
 
@@ -2857,7 +3465,7 @@ module.exports = class RTCSession extends EventEmitter
         logger.debug('emit "sdp"');
         this.emit('sdp', e);
 
-        const answer = new RTCSessionDescription({ type: 'answer', sdp: e.sdp });
+        const answer = this._createRemoteDescription('answer', e.sdp);
 
         this._connectionPromiseQueue = this._connectionPromiseQueue
           .then(() => this._connection.setRemoteDescription(answer))
@@ -2893,7 +3501,7 @@ module.exports = class RTCSession extends EventEmitter
         logger.debug('emit "sdp"');
         this.emit('sdp', e);
 
-        const answer = new RTCSessionDescription({ type: 'answer', sdp: e.sdp });
+        const answer = this._createRemoteDescription('answer', e.sdp);
 
         this._connectionPromiseQueue = this._connectionPromiseQueue
           .then(() =>
@@ -2913,7 +3521,7 @@ module.exports = class RTCSession extends EventEmitter
           })
           .then(() =>
           {
-            this._connection.setRemoteDescription(answer)
+            return this._connection.setRemoteDescription(answer)
               .then(() =>
               {
                 // Handle Session Timers.
@@ -2968,51 +3576,15 @@ module.exports = class RTCSession extends EventEmitter
       extraHeaders.push(`Session-Expires: ${this._sessionTimers.currentExpires};refresher=${this._sessionTimers.refresher ? 'uac' : 'uas'}`);
     }
 
-    this._connectionPromiseQueue = this._connectionPromiseQueue
-      .then(() => this._createLocalDescription('offer', rtcOfferConstraints))
-      .then((sdp) =>
+    const onFailed = (response) =>
+    {
+      if (eventHandlers.failed)
       {
-        sdp = this._mangleOffer(sdp);
+        eventHandlers.failed(response);
+      }
+    };
 
-        const e = { originator: 'local', type: 'offer', sdp };
-
-        logger.debug('emit "sdp"');
-        this.emit('sdp', e);
-
-        this.sendRequest(JsSIP_C.INVITE, {
-          extraHeaders,
-          body          : sdp,
-          eventHandlers : {
-            onSuccessResponse : (response) =>
-            {
-              onSucceeded.call(this, response);
-              succeeded = true;
-            },
-            onErrorResponse : (response) =>
-            {
-              onFailed.call(this, response);
-            },
-            onTransportError : () =>
-            {
-              this.onTransportError(); // Do nothing because session ends.
-            },
-            onRequestTimeout : () =>
-            {
-              this.onRequestTimeout(); // Do nothing because session ends.
-            },
-            onDialogError : () =>
-            {
-              this.onDialogError(); // Do nothing because session ends.
-            }
-          }
-        });
-      })
-      .catch(() =>
-      {
-        onFailed();
-      });
-
-    function onSucceeded(response)
+    const onSucceeded = (response) =>
     {
       if (this._status === C.STATUS_TERMINATED)
       {
@@ -3030,13 +3602,13 @@ module.exports = class RTCSession extends EventEmitter
       // Must have SDP answer.
       if (!response.body)
       {
-        onFailed.call(this);
+        onFailed.call(this, response);
 
         return;
       }
       else if (!response.hasHeader('Content-Type') || response.getHeader('Content-Type').toLowerCase() !== 'application/sdp')
       {
-        onFailed.call(this);
+        onFailed.call(this, response);
 
         return;
       }
@@ -3046,10 +3618,9 @@ module.exports = class RTCSession extends EventEmitter
       logger.debug('emit "sdp"');
       this.emit('sdp', e);
 
-      const answer = new RTCSessionDescription({ type: 'answer', sdp: e.sdp });
+      const answer = this._createRemoteDescription('answer', e.sdp);
 
-      this._connectionPromiseQueue = this._connectionPromiseQueue
-        .then(() => this._connection.setRemoteDescription(answer))
+      return this._connection.setRemoteDescription(answer)
         .then(() =>
         {
           if (eventHandlers.succeeded)
@@ -3059,21 +3630,67 @@ module.exports = class RTCSession extends EventEmitter
         })
         .catch((error) =>
         {
-          onFailed.call(this);
+          onFailed.call(this, error);
 
           logger.warn('emit "peerconnection:setremotedescriptionfailed" [error:%o]', error);
 
           this.emit('peerconnection:setremotedescriptionfailed', error);
         });
-    }
+    };
 
-    function onFailed(response)
-    {
-      if (eventHandlers.failed)
+    this._connectionPromiseQueue = this._connectionPromiseQueue
+      .then(() => this._createLocalDescription('offer', rtcOfferConstraints))
+      .then((sdp) =>
       {
-        eventHandlers.failed(response);
-      }
-    }
+        sdp = this._mangleOffer(sdp);
+
+        const e = { originator: 'local', type: 'offer', sdp };
+
+        logger.debug('emit "sdp"');
+        this.emit('sdp', e);
+
+        return new Promise((resolveReceiveResponse) =>
+        {
+          this.sendRequest(JsSIP_C.INVITE, {
+            extraHeaders,
+            body          : sdp,
+            eventHandlers : {
+              onSuccessResponse : (response) =>
+              {
+                onSucceeded.call(this, response).then(() =>
+                {
+                  succeeded = true;
+                  resolveReceiveResponse();
+                });
+              },
+              onErrorResponse : (response) =>
+              {
+                onFailed.call(this, response);
+                resolveReceiveResponse();
+              },
+              onTransportError : () =>
+              {
+                this.onTransportError(); // Do nothing because session ends.
+                resolveReceiveResponse();
+              },
+              onRequestTimeout : () =>
+              {
+                this.onRequestTimeout(); // Do nothing because session ends.
+                resolveReceiveResponse();
+              },
+              onDialogError : () =>
+              {
+                this.onDialogError(); // Do nothing because session ends.
+                resolveReceiveResponse();
+              }
+            }
+          });
+        });
+      })
+      .catch((error) =>
+      {
+        onFailed(error);
+      });
   }
 
   /**
@@ -3099,6 +3716,72 @@ module.exports = class RTCSession extends EventEmitter
       extraHeaders.push(`Session-Expires: ${this._sessionTimers.currentExpires};refresher=${this._sessionTimers.refresher ? 'uac' : 'uas'}`);
     }
 
+    const onFailed = (error) =>
+    {
+      if (eventHandlers.failed) { eventHandlers.failed(error); }
+    };
+
+    const onSucceeded = (response) =>
+    {
+      if (this._status === C.STATUS_TERMINATED)
+      {
+        return;
+      }
+
+      // If it is a 2XX retransmission exit now.
+      if (succeeded) { return; }
+
+      // Handle Session Timers.
+      this._handleSessionTimersInIncomingResponse(response);
+
+      // Must have SDP answer.
+      if (sdpOffer)
+      {
+        if (!response.body)
+        {
+          onFailed.call(this, response);
+
+          return;
+        }
+        else if (!response.hasHeader('Content-Type') || response.getHeader('Content-Type').toLowerCase() !== 'application/sdp')
+        {
+          onFailed.call(this, response);
+
+          return;
+        }
+
+        const e = { originator: 'remote', type: 'answer', sdp: response.body };
+
+        logger.debug('emit "sdp"');
+        this.emit('sdp', e);
+
+        const answer = this._createRemoteDescription('answer', e.sdp);
+
+        return this._connection.setRemoteDescription(answer)
+          .then(() =>
+          {
+            if (eventHandlers.succeeded)
+            {
+              eventHandlers.succeeded(response);
+            }
+          })
+          .catch((error) =>
+          {
+            onFailed.call(this, error);
+
+            logger.warn('emit "peerconnection:setremotedescriptionfailed" [error:%o]', error);
+
+            this.emit('peerconnection:setremotedescriptionfailed', error);
+          });
+      }
+      // No SDP answer.
+      else
+        if (eventHandlers.succeeded)
+        {
+          eventHandlers.succeeded(response);
+        }
+    };
+
     if (sdpOffer)
     {
       extraHeaders.push('Content-Type: application/sdp');
@@ -3114,37 +3797,47 @@ module.exports = class RTCSession extends EventEmitter
           logger.debug('emit "sdp"');
           this.emit('sdp', e);
 
-          this.sendRequest(JsSIP_C.UPDATE, {
-            extraHeaders,
-            body          : sdp,
-            eventHandlers : {
-              onSuccessResponse : (response) =>
-              {
-                onSucceeded.call(this, response);
-                succeeded = true;
-              },
-              onErrorResponse : (response) =>
-              {
-                onFailed.call(this, response);
-              },
-              onTransportError : () =>
-              {
-                this.onTransportError(); // Do nothing because session ends.
-              },
-              onRequestTimeout : () =>
-              {
-                this.onRequestTimeout(); // Do nothing because session ends.
-              },
-              onDialogError : () =>
-              {
-                this.onDialogError(); // Do nothing because session ends.
+          return new Promise((resolveReceiveResponse) =>
+          {
+            this.sendRequest(JsSIP_C.UPDATE, {
+              extraHeaders,
+              body          : sdp,
+              eventHandlers : {
+                onSuccessResponse : (response) =>
+                {
+                  onSucceeded.call(this, response).then(() =>
+                  {
+                    succeeded = true;
+                    resolveReceiveResponse();
+                  });
+                },
+                onErrorResponse : (response) =>
+                {
+                  onFailed.call(this, response);
+                  resolveReceiveResponse();
+                },
+                onTransportError : () =>
+                {
+                  this.onTransportError(); // Do nothing because session ends.
+                  resolveReceiveResponse();
+                },
+                onRequestTimeout : () =>
+                {
+                  this.onRequestTimeout(); // Do nothing because session ends.
+                  resolveReceiveResponse();
+                },
+                onDialogError : () =>
+                {
+                  this.onDialogError(); // Do nothing because session ends.
+                  resolveReceiveResponse();
+                }
               }
-            }
+            });
           });
         })
-        .catch(() =>
+        .catch((error) =>
         {
-          onFailed.call(this);
+          onFailed.call(this, error);
         });
     }
 
@@ -3176,72 +3869,6 @@ module.exports = class RTCSession extends EventEmitter
           }
         }
       });
-    }
-
-    function onSucceeded(response)
-    {
-      if (this._status === C.STATUS_TERMINATED)
-      {
-        return;
-      }
-
-      // If it is a 2XX retransmission exit now.
-      if (succeeded) { return; }
-
-      // Handle Session Timers.
-      this._handleSessionTimersInIncomingResponse(response);
-
-      // Must have SDP answer.
-      if (sdpOffer)
-      {
-        if (!response.body)
-        {
-          onFailed.call(this);
-
-          return;
-        }
-        else if (!response.hasHeader('Content-Type') || response.getHeader('Content-Type').toLowerCase() !== 'application/sdp')
-        {
-          onFailed.call(this);
-
-          return;
-        }
-
-        const e = { originator: 'remote', type: 'answer', sdp: response.body };
-
-        logger.debug('emit "sdp"');
-        this.emit('sdp', e);
-
-        const answer = new RTCSessionDescription({ type: 'answer', sdp: e.sdp });
-
-        this._connectionPromiseQueue = this._connectionPromiseQueue
-          .then(() => this._connection.setRemoteDescription(answer))
-          .then(() =>
-          {
-            if (eventHandlers.succeeded)
-            {
-              eventHandlers.succeeded(response);
-            }
-          })
-          .catch((error) =>
-          {
-            onFailed.call(this);
-
-            logger.warn('emit "peerconnection:setremotedescriptionfailed" [error:%o]', error);
-
-            this.emit('peerconnection:setremotedescriptionfailed', error);
-          });
-      }
-      // No SDP answer.
-      else if (eventHandlers.succeeded)
-      {
-        eventHandlers.succeeded(response);
-      }
-    }
-
-    function onFailed(response)
-    {
-      if (eventHandlers.failed) { eventHandlers.failed(response); }
     }
   }
 
@@ -3474,30 +4101,42 @@ module.exports = class RTCSession extends EventEmitter
     }
   }
 
-  _toggleMuteAudio(mute)
+  _forEachSenders(callback)
   {
-    const senders = this._connection.getSenders().filter((sender) =>
-    {
-      return sender.track && sender.track.kind === 'audio';
-    });
+    const senders = this._connection.getSenders();
 
     for (const sender of senders)
     {
-      sender.track.enabled = !mute;
+      callback(sender);
     }
+
+    return senders;
+  }
+
+  _toggleMuteAudio(mute)
+  {
+    this._forEachSenders((sender) =>
+    {
+      const { track } = sender;
+
+      if (track && track.kind === 'audio' && !this._hasPresentationSender(sender))
+      {
+        track.enabled = !mute;
+      }
+    });
   }
 
   _toggleMuteVideo(mute)
   {
-    const senders = this._connection.getSenders().filter((sender) =>
+    this._forEachSenders((sender) =>
     {
-      return sender.track && sender.track.kind === 'video';
-    });
+      const { track } = sender;
 
-    for (const sender of senders)
-    {
-      sender.track.enabled = !mute;
-    }
+      if (track && track.kind === 'video' && !this._hasPresentationSender(sender))
+      {
+        track.enabled = !mute;
+      }
+    });
   }
 
   _newRTCSession(originator, request)
@@ -3655,5 +4294,56 @@ module.exports = class RTCSession extends EventEmitter
       audio,
       video
     });
+  }
+
+  /**
+   * Добавить новый RTCRtpTransceiver к текущему соединению.
+   * Это расширенная обёртка над `RTCPeerConnection.addTransceiver()` (см. MDN).
+   * Помимо стандартного поведения использует ту же логику, что и `addTrackTransceiver`:
+   *  • поддержка Firefox < 109 без `addTransceiver`;
+   *  • вызов `setEncodingsToSender` для установки `sendEncodings`/`degradationPreference`;
+   */
+  addTransceiver(trackOrKind, init = {}, { degradationPreference } = {})
+  {
+    if (!this._connection)
+      return Promise.reject(new Error('PeerConnection is not initialized'));
+
+    const { direction = 'sendrecv', sendEncodings, streams = [] } = init;
+
+    // Если передали настоящий MediaStreamTrack и поток, используем существующую логику
+    if (typeof trackOrKind !== 'string')
+    {
+      return addTrackTransceiver(this._connection, trackOrKind, streams, {
+        directionAudio : direction,
+        directionVideo : direction,
+        sendEncodings,
+        degradationPreference
+      });
+    }
+
+    // trackOrKind строка 'audio' | 'video'
+
+    const transceiver = this._connection.addTransceiver(trackOrKind, {
+      direction,
+      sendEncodings,
+      streams
+    });
+
+
+    if (direction !== 'recvonly' && degradationPreference)
+    {
+
+      return setEncodingsToSender({
+        sender : transceiver.sender,
+        sendEncodings,
+        degradationPreference
+      }).then(() =>
+      {
+        return transceiver;
+      });
+
+    }
+
+    return Promise.resolve(transceiver);
   }
 };

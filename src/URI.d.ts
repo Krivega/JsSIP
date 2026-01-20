@@ -1,4 +1,4 @@
-import {Grammar} from './Grammar'
+import { Grammar } from './Grammar';
 
 export type URIScheme = 'sip' | string;
 
@@ -6,7 +6,7 @@ export type Parameters = Record<string, string | null>;
 
 export type Headers = Record<string, string | string[]>;
 
-export class URI {
+export default class URI {
   scheme: URIScheme
   user: string
   host: string

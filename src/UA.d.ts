@@ -1,28 +1,23 @@
-import {EventEmitter} from 'events'
+import { EventEmitter } from 'events'
 
-import {Socket, WeightedSocket} from './Socket'
-import {AnswerOptions, Originator, RTCSession, RTCSessionEventMap, TerminateOptions} from './RTCSession'
-import {IncomingRequest, IncomingResponse, OutgoingRequest} from './SIPMessage'
-import {Message, SendMessageOptions} from './Message'
-import {Registrator} from './Registrator'
-import {URI} from './URI'
-import {causes} from './Constants'
+import { causes } from './Constants'
+import Message, { SendMessageOptions } from './Message'
+import Options from './Options'
+import RTCSession, { ConnectOptions, Originator, TerminateOptions } from './RTCSession'
+import { Registrator } from './Registrator'
+import { IncomingRequest, IncomingResponse, OutgoingRequest } from './SIPMessage'
+import { Socket, WeightedSocket } from './Socket'
+import URI from './URI'
 
 export interface UnRegisterOptions {
   all?: boolean;
 }
 
-export interface CallOptions extends AnswerOptions {
-  eventHandlers?: Partial<RTCSessionEventMap>;
-  anonymous?: boolean;
-  fromUserName?: string;
-  fromDisplayName?: string;
-}
+export interface CallOptions extends ConnectOptions {}
 
-export interface UAConfiguration {
+  interface UAConfigurationCore {
   // mandatory parameters
   sockets: Socket | Socket[] | WeightedSocket[] ;
-  uri: string;
   // optional parameters
   authorization_jwt?: string;
   authorization_user?: string;
@@ -45,23 +40,33 @@ export interface UAConfiguration {
   use_preloaded_route?: boolean;
   user_agent?: string;
   extra_headers?: string[];
+  sdpSemantics?: 'plan-b' | 'unified-plan';
+}
+
+export interface UAConfigurationParams extends UAConfigurationCore {
+  // mandatory parameters 
+  uri: string; 
+}
+
+export interface UAConfiguration extends UAConfigurationCore { 
+  uri: URI;
 }
 
 export interface IncomingRTCSessionEvent {
-  originator: Originator.REMOTE;
+  originator: `${Originator.REMOTE}`;
   session: RTCSession;
   request: IncomingRequest;
 }
 
 export interface OutgoingRTCSessionEvent {
-  originator: Originator.LOCAL;
+  originator: `${Originator.LOCAL}`;
   session: RTCSession;
   request: OutgoingRequest;
 }
 
 export type RTCSessionEvent = IncomingRTCSessionEvent | OutgoingRTCSessionEvent;
 
-export interface ConnectingEvent {
+export interface ConnectingEventUA {
   socket: Socket;
   attempts: number
 }
@@ -82,38 +87,42 @@ export interface RegisteredEvent {
 }
 
 export interface UnRegisteredEvent {
-  response: IncomingResponse;
+  response?: IncomingResponse;
   cause?: causes;
+}
+export interface RegistrationFailedEvent {
+  response?: IncomingResponse;
+  cause: causes;
 }
 
 export interface IncomingMessageEvent {
-  originator: Originator.REMOTE;
+  originator: `${Originator.REMOTE}`;
   message: Message;
   request: IncomingRequest;
 }
 
 export interface OutgoingMessageEvent {
-  originator: Originator.LOCAL;
+  originator: `${Originator.LOCAL}`;
   message: Message;
   request: OutgoingRequest;
 }
 
 export interface IncomingOptionsEvent {
-  originator: Originator.REMOTE;
+  originator: `${Originator.REMOTE}`;
   request: IncomingRequest;
 }
 
 export interface OutgoingOptionsEvent {
-  originator: Originator.LOCAL;
+  originator: `${Originator.LOCAL}`;
   request: OutgoingRequest;
 }
 
-export type ConnectingListener = (event: ConnectingEvent) => void;
+export type ConnectingListenerUA = (event: ConnectingEventUA) => void;
 export type ConnectedListener = (event: ConnectedEvent) => void;
 export type DisconnectedListener = (event: DisconnectEvent) => void;
 export type RegisteredListener = (event: RegisteredEvent) => void;
 export type UnRegisteredListener = (event: UnRegisteredEvent) => void;
-export type RegistrationFailedListener = UnRegisteredListener;
+export type RegistrationFailedListener = (event: RegistrationFailedEvent) => void;;
 export type RegistrationExpiringListener = () => void;
 export type IncomingRTCSessionListener = (event: IncomingRTCSessionEvent) => void;
 export type OutgoingRTCSessionListener = (event: OutgoingRTCSessionEvent) => void;
@@ -127,7 +136,7 @@ export type OptionsListener = IncomingOptionsListener | OutgoingOptionsListener;
 export type SipEventListener = <T = any>(event: { event: T; request: IncomingRequest; }) => void
 
 export interface UAEventMap {
-  connecting: ConnectingListener;
+  connecting: ConnectingListenerUA;
   connected: ConnectedListener;
   disconnected: DisconnectedListener;
   registered: RegisteredListener;
@@ -138,6 +147,8 @@ export interface UAEventMap {
   newMessage: MessageListener;
   sipEvent: SipEventListener;
   newOptions: OptionsListener;
+  newTransaction: (event: { transaction: any }) => void;
+  transactionDestroyed: (event: { transaction: any }) => void;
 }
 
 export interface UAContactOptions {
@@ -164,16 +175,20 @@ declare enum UAStatus {
   NETWORK_ERROR = 2
 }
 
-export class UA extends EventEmitter {
+export default class UA extends EventEmitter {
   static get C(): typeof UAStatus;
 
-  constructor(configuration: UAConfiguration);
+  configuration: UAConfiguration;
+
+  constructor(configuration: UAConfigurationParams);
 
   get C(): typeof UAStatus;
 
   get status(): UAStatus;
 
   get contact(): UAContact;
+
+  get transport(): any;
 
   start(): void;
 
@@ -189,15 +204,19 @@ export class UA extends EventEmitter {
 
   sendMessage(target: string | URI, body: string, options?: SendMessageOptions): Message;
 
+  sendOptions(target: string | URI, body?: string, options?: any): Options;
+
   terminateSessions(options?: TerminateOptions): void;
 
   isRegistered(): boolean;
 
   isConnected(): boolean;
 
+  normalizeTarget(target: string): URI | undefined;
+
   get<T extends keyof UAConfiguration>(parameter: T): UAConfiguration[T];
 
-  set<T extends keyof UAConfiguration>(parameter: T, value: UAConfiguration[T]): boolean;
+  set<T extends keyof UAConfigurationParams>(parameter: T, value: UAConfigurationParams[T]): boolean;
 
   on<T extends keyof UAEventMap>(type: T, listener: UAEventMap[T]): this;
 }
