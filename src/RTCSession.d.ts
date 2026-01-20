@@ -1,8 +1,8 @@
 import { EventEmitter } from 'events'
 import {IncomingRequest, IncomingResponse, OutgoingRequest} from './SIPMessage'
-import {NameAddrHeader} from './NameAddrHeader'
-import {URI} from './URI'
-import {UA} from './UA'
+import NameAddrHeader from './NameAddrHeader'
+import URI from './URI'
+import UA from './UA'
 import {causes, DTMF_TRANSPORT} from './Constants'
 
 // Define VoidFunction type

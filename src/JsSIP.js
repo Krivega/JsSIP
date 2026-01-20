@@ -9,6 +9,9 @@ const Grammar = require('./Grammar');
 const WebSocketInterface = require('./WebSocketInterface');
 const debug = require('debug')('JsSIP');
 const RTCSession = require('./RTCSession');
+const IncomingRequest = require('./SIPMessage').IncomingRequest;
+const IncomingResponse = require('./SIPMessage').IncomingResponse;
+const OutgoingRequest = require('./SIPMessage').OutgoingRequest;
 
 debug('version %s', pkg.version);
 
@@ -25,6 +28,9 @@ module.exports = {
   WebSocketInterface,
   Grammar,
   RTCSession,
+  IncomingRequest,
+  IncomingResponse,
+  OutgoingRequest,
   // Expose the debug module.
   debug : require('debug'),
   get name() { return pkg.title; },
