@@ -9,7 +9,7 @@ export { C, Exceptions, Grammar, Utils };
 
 export {default as UA} from './UA'
 export * from './UA'
-export {RTCSession} from './RTCSession'
+export {default as RTCSession} from './RTCSession'
 export * from './RTCSession'
 export {default as URI} from './URI'
 export * from './URI'

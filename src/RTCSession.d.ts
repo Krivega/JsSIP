@@ -289,7 +289,7 @@ declare enum SessionStatus {
   STATUS_CONFIRMED = 9
 }
 
-export class RTCSession extends EventEmitter {
+export default class RTCSession extends EventEmitter {
   constructor (ua: UA);
 
   static get C(): typeof SessionStatus;
