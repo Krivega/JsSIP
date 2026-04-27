@@ -32,10 +32,9 @@ export interface CallOptions extends AnswerOptions {
 	fromDisplayName?: string;
 }
 
-export interface UAConfiguration {
+export interface UAConfigurationCore {
 	// mandatory parameters
 	sockets: Socket | (Socket | WeightedSocket)[];
-	uri: string;
 	// optional parameters
 	authorization_jwt?: string;
 	authorization_user?: string;
@@ -58,6 +57,15 @@ export interface UAConfiguration {
 	use_preloaded_route?: boolean;
 	user_agent?: string;
 	extra_headers?: string[];
+}
+
+export interface UAConfigurationParams extends UAConfigurationCore {
+	// mandatory parameters
+	uri: string;
+}
+
+export interface UAConfiguration extends UAConfigurationCore {
+	uri: URI;
 }
 
 export interface IncomingRTCSessionEvent {
@@ -239,7 +247,7 @@ export class UA extends EventEmitter {
 
 	configuration: UAConfiguration;
 
-	constructor(configuration: UAConfiguration);
+	constructor(configuration: UAConfigurationParams);
 
 	get C(): typeof UAStatus;
 
@@ -292,9 +300,9 @@ export class UA extends EventEmitter {
 
 	get<T extends keyof UAConfiguration>(parameter: T): UAConfiguration[T];
 
-	set<T extends keyof UAConfiguration>(
+	set<T extends keyof UAConfigurationParams>(
 		parameter: T,
-		value: UAConfiguration[T]
+		value: UAConfigurationParams[T]
 	): boolean;
 
 	on<T extends keyof UAEventMap>(type: T, listener: UAEventMap[T]): this;
