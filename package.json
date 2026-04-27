@@ -1,13 +1,13 @@
 {
-    "name": "@krivega/jssip",
+	"name": "@krivega/jssip",
 	"title": "JsSIP",
 	"description": "The Javascript SIP library",
-    "version": "5.6.0",
+	"version": "5.6.0",
 	"homepage": "https://jssip.net",
 	"contributors": [
 		"José Luis Millán <jmillan@aliax.net> (https://github.com/jmillan)",
 		"Iñaki Baz Castillo <ibc@aliax.net> (https://inakibaz.me)",
-        "Krivega Dmitriy <mr.krivega@gmail.com> (https://krivega.com)"
+		"Krivega Dmitriy <mr.krivega@gmail.com> (https://krivega.com)"
 	],
 	"types": "lib/JsSIP.d.ts",
 	"main": "lib/JsSIP.js",
@@ -46,10 +46,10 @@
 		"docs:check": "node npm-scripts.mjs docs:check"
 	},
 	"dependencies": {
-        "debug": "^4.4.3",
+		"debug": "^4.4.3",
 		"events": "^3.3.0",
-        "sdp-transform": "^3.0.0",
-        "sequent-promises": "^2.0.1"
+		"sdp-transform": "^3.0.0",
+		"sequent-promises": "^2.0.1"
 	},
 	"devDependencies": {
 		"@eslint/eslintrc": "^3.3.3",
