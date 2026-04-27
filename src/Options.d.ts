@@ -16,9 +16,9 @@ export interface AcceptOptions extends ExtraHeaders {
 }
 
 export interface MessageFailedEvent {
-	originator: Originator;
+	originator: `${Originator}`;
 	response: IncomingResponse | null;
-	cause?: causes;
+	cause?: `${causes}`;
 }
 
 export type MessageFailedListener = (event: MessageFailedEvent) => void;

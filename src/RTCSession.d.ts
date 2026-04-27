@@ -71,12 +71,12 @@ export interface RejectOptions extends ExtraHeaders {
 
 export interface TerminateOptions extends RejectOptions {
 	body?: string;
-	cause?: causes | string;
+	cause?: `${causes}` | string;
 }
 
 export interface TerminateAsyncOptions extends RejectOptions {
 	body?: string;
-	cause?: causes | string;
+	cause?: `${causes}` | string;
 }
 
 export interface ReferOptions extends ExtraHeaders {
@@ -100,7 +100,7 @@ export interface ReferRequestSucceededEvent {
 
 export interface ReferRequestFailedEvent {
 	response: IncomingResponse | null;
-	cause: causes;
+	cause: `${causes}`;
 }
 
 export interface ReferSubscriberEventMap {
