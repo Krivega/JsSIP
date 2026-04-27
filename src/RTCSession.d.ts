@@ -405,7 +405,7 @@ export class RTCSession extends EventEmitter {
 		contentType: string,
 		body?: string,
 		options?: ExtraHeaders & { noTerminateWhenError?: boolean }
-	): Promise<void> | void;
+	): Promise<void>;
 
 	hold(options?: HoldOptions, done?: VoidFunction): boolean;
 
