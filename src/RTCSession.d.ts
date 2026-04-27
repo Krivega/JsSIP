@@ -356,26 +356,26 @@ export class RTCSession extends EventEmitter {
 
 	get causes(): typeof causes;
 
-	get id(): string | null;
+	get id(): string;
 
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	set data(_data: any);
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	get data(): any;
 
-	get connection(): RTCPeerConnectionDeprecated | null;
+	get connection(): RTCPeerConnectionDeprecated;
 
-	get contact(): string | null;
+	get contact(): string;
 
-	get direction(): SessionDirection | null;
+	get direction(): SessionDirection;
 
-	get local_identity(): NameAddrHeader | null;
+	get local_identity(): NameAddrHeader;
 
-	get remote_identity(): NameAddrHeader | null;
+	get remote_identity(): NameAddrHeader;
 
-	get start_time(): Date | null;
+	get start_time(): Date;
 
-	get end_time(): Date | null;
+	get end_time(): Date;
 
 	get status(): SessionStatus;
 
