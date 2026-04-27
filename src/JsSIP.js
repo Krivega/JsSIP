@@ -4,6 +4,7 @@ const Exceptions = require('./Exceptions');
 const Utils = require('./Utils');
 const UA = require('./UA');
 const URI = require('./URI');
+const Options = require('./Options');
 const NameAddrHeader = require('./NameAddrHeader');
 const Grammar = require('./Grammar');
 const WebSocketInterface = require('./WebSocketInterface');
@@ -24,6 +25,7 @@ module.exports = {
 	Utils,
 	UA,
 	URI,
+	Options,
 	NameAddrHeader,
 	WebSocketInterface,
 	Grammar,
