@@ -2,7 +2,7 @@
 	"name": "@krivega/jssip",
 	"title": "JsSIP",
 	"description": "The Javascript SIP library",
-	"version": "6.0.4",
+	"version": "6.0.5",
 	"homepage": "https://jssip.net",
 	"contributors": [
 		"José Luis Millán <jmillan@aliax.net> (https://github.com/jmillan)",
