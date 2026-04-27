@@ -177,7 +177,7 @@ export interface PeerConnectionEvent {
 	peerconnection: RTCPeerConnectionDeprecated;
 }
 
-export interface ConnectingEvent {
+export interface ConnectingSessionEvent {
 	request: IncomingRequest | OutgoingRequest;
 }
 
@@ -274,7 +274,7 @@ export interface MediaStreamTypes {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type GenericErrorListener = (error: any) => void;
 export type PeerConnectionListener = (event: PeerConnectionEvent) => void;
-export type ConnectingListener = (event: ConnectingEvent) => void;
+export type ConnectingSessionListener = (event: ConnectingSessionEvent) => void;
 export type SendingListener = (event: SendingEvent) => void;
 export type IncomingListener = (event: IncomingEvent) => void;
 export type OutgoingListener = (event: OutgoingEvent) => void;
@@ -303,7 +303,7 @@ export type ErrorListener = (error: Error) => void;
 
 export interface RTCSessionEventMap {
 	peerconnection: PeerConnectionListener;
-	connecting: ConnectingListener;
+	connecting: ConnectingSessionListener;
 	sending: SendingListener;
 	progress: CallListener;
 	accepted: CallListener;

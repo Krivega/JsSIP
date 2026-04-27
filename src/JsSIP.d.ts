@@ -12,6 +12,10 @@ export { URI } from './URI';
 export { NameAddrHeader } from './NameAddrHeader';
 export { WebSocketInterface } from './WebSocketInterface';
 export { Socket, WeightedSocket } from './Socket';
+
+export * from './UA';
+export * from './RTCSession';
+export * from './URI';
 export * from './core';
 export * from './Registrator';
 export * from './SIPMessage';
