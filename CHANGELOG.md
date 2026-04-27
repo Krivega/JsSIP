@@ -2,6 +2,27 @@
 
 ### NEXT
 
+### 3.13.7
+
+- Do not include test folder in lib/.
+
+### 3.13.6
+
+- Dialog: Fix wrong CSEQ on ACK for re-INVITE (#966). Thanks to @sabrineLayouni reporting.
+
+### 3.13.5
+
+- ReferSubscriber: Fix authentication causing ID update (#961). Thanks to @sabrineLayouni reporting.
+- Fix: JsSIP.d.ts was missing in lib/.
+
+### 3.13.4
+
+- Fix: Regenerate package-lock.json with all platform bindings.
+
+### 3.13.3
+
+- RTCSession: Fix INVITE request URI from REFER message (#962). Thanks to @jim-holmes-vtcsecure for reporting.
+
 ### 3.13.0
 
 - Modernize (#955).
