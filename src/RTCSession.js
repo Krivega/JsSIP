@@ -1717,6 +1717,40 @@ module.exports = class RTCSession extends EventEmitter {
 	}
 
 	/**
+	 * Send a generic in-dialog Request
+	 */
+	sendRequestAsync(method, sdp, extraHeaders) {
+		logger.debug('sendRequestAsync()');
+
+		return new Promise((resolve, reject) => {
+			this.sendRequest(method, {
+				extraHeaders,
+				body: sdp,
+				eventHandlers: {
+					onSuccessResponse: response => {
+						resolve({ response, isError: false });
+					},
+					onErrorResponse: error => {
+						reject(error);
+					},
+					onTransportError: () => {
+						this.onTransportError(); // Do nothing because session ends.
+						resolve({ isError: true });
+					},
+					onRequestTimeout: () => {
+						this.onRequestTimeout(); // Do nothing because session ends.
+						resolve({ isError: true });
+					},
+					onDialogError: () => {
+						this.onDialogError(); // Do nothing because session ends.
+						resolve({ isError: true });
+					},
+				},
+			});
+		});
+	}
+
+	/**
 	 * In dialog Request Reception
 	 */
 	receiveRequest(request) {
@@ -3320,8 +3354,12 @@ module.exports = class RTCSession extends EventEmitter {
 			);
 		}
 
-		return (this._connectionPromiseQueue = this._connectionPromiseQueue
-			.then(() => this._createLocalDescription('offer', rtcOfferConstraints))
+		const promiseCreateOffer = (this._connectionPromiseQueue =
+			this._connectionPromiseQueue.then(() =>
+				this._createLocalDescription('offer', rtcOfferConstraints)
+			));
+
+		return promiseCreateOffer
 			.then(sdp => {
 				sdp = this._mangleOffer(sdp);
 
@@ -3330,40 +3368,19 @@ module.exports = class RTCSession extends EventEmitter {
 				logger.debug('emit "sdp"');
 				this.emit('sdp', e);
 
-				return new Promise(resolveReceiveResponse => {
-					this.sendRequest(JsSIP_C.INVITE, {
-						extraHeaders,
-						body: sdp,
-						eventHandlers: {
-							onSuccessResponse: response => {
-								onSucceeded.call(this, response).finally(() => {
-									succeeded = true;
-									resolveReceiveResponse();
-								});
-							},
-							onErrorResponse: response => {
-								onFailed.call(this, response);
-								resolveReceiveResponse();
-							},
-							onTransportError: () => {
-								this.onTransportError(); // Do nothing because session ends.
-								resolveReceiveResponse();
-							},
-							onRequestTimeout: () => {
-								this.onRequestTimeout(); // Do nothing because session ends.
-								resolveReceiveResponse();
-							},
-							onDialogError: () => {
-								this.onDialogError(); // Do nothing because session ends.
-								resolveReceiveResponse();
-							},
-						},
-					});
-				});
+				return this.sendRequestAsync(JsSIP_C.INVITE, sdp, extraHeaders).then(
+					({ response, isError }) => {
+						if (!isError) {
+							succeeded = true;
+
+							return onSucceeded.call(this, response);
+						}
+					}
+				);
 			})
 			.catch(error => {
 				onFailed(error);
-			}));
+			});
 
 		async function onSucceeded(response) {
 			if (this._status === C.STATUS_TERMINATED) {
@@ -3400,9 +3417,12 @@ module.exports = class RTCSession extends EventEmitter {
 			this.emit('sdp', e);
 
 			const answer = this._createRemoteDescription('answer', e.sdp);
+			const promiseSetAnswer = (this._connectionPromiseQueue =
+				this._connectionPromiseQueue.then(() =>
+					this._connection.setRemoteDescription(answer)
+				));
 
-			return (this._connectionPromiseQueue = this._connectionPromiseQueue
-				.then(() => this._connection.setRemoteDescription(answer))
+			return promiseSetAnswer
 				.then(() => {
 					if (eventHandlers.succeeded) {
 						eventHandlers.succeeded(response);
@@ -3417,7 +3437,7 @@ module.exports = class RTCSession extends EventEmitter {
 					);
 
 					this.emit('peerconnection:setremotedescriptionfailed', error);
-				}));
+				});
 		}
 
 		function onFailed(response) {
@@ -3453,8 +3473,12 @@ module.exports = class RTCSession extends EventEmitter {
 		if (sdpOffer) {
 			extraHeaders.push('Content-Type: application/sdp');
 
-			return (this._connectionPromiseQueue = this._connectionPromiseQueue
-				.then(() => this._createLocalDescription('offer', rtcOfferConstraints))
+			const promiseCreateOffer = (this._connectionPromiseQueue =
+				this._connectionPromiseQueue.then(() =>
+					this._createLocalDescription('offer', rtcOfferConstraints)
+				));
+
+			return promiseCreateOffer
 				.then(sdp => {
 					sdp = this._mangleOffer(sdp);
 
@@ -3463,71 +3487,33 @@ module.exports = class RTCSession extends EventEmitter {
 					logger.debug('emit "sdp"');
 					this.emit('sdp', e);
 
-					return new Promise(resolveReceiveResponse => {
-						this.sendRequest(JsSIP_C.UPDATE, {
-							extraHeaders,
-							body: sdp,
-							eventHandlers: {
-								onSuccessResponse: response => {
-									onSucceeded.call(this, response).finally(() => {
-										succeeded = true;
-										resolveReceiveResponse();
-									});
-								},
-								onErrorResponse: response => {
-									onFailed.call(this, response);
-									resolveReceiveResponse();
-								},
-								onTransportError: () => {
-									this.onTransportError(); // Do nothing because session ends.
-									resolveReceiveResponse();
-								},
-								onRequestTimeout: () => {
-									this.onRequestTimeout(); // Do nothing because session ends.
-									resolveReceiveResponse();
-								},
-								onDialogError: () => {
-									this.onDialogError(); // Do nothing because session ends.
-									resolveReceiveResponse();
-								},
-							},
-						});
-					});
+					return this.sendRequestAsync(JsSIP_C.UPDATE, sdp, extraHeaders).then(
+						({ response, isError }) => {
+							if (!isError) {
+								succeeded = true;
+
+								return onSucceeded.call(this, response);
+							}
+						}
+					);
 				})
 				.catch(error => {
 					onFailed.call(this, error);
-				}));
+				});
 		}
 
 		// No SDP.
 		else {
-			return new Promise(resolveReceiveResponse => {
-				this.sendRequest(JsSIP_C.UPDATE, {
-					extraHeaders,
-					eventHandlers: {
-						onSuccessResponse: response => {
-							onSucceeded.call(this, response).finally(() => {
-								resolveReceiveResponse();
-							});
-						},
-						onErrorResponse: response => {
-							onFailed.call(this, response);
-							resolveReceiveResponse();
-						},
-						onTransportError: () => {
-							this.onTransportError(); // Do nothing because session ends.
-							resolveReceiveResponse();
-						},
-						onRequestTimeout: () => {
-							this.onRequestTimeout(); // Do nothing because session ends.
-							resolveReceiveResponse();
-						},
-						onDialogError: () => {
-							this.onDialogError(); // Do nothing because session ends.
-							resolveReceiveResponse();
-						},
-					},
-				});
+			return this.sendRequestAsync(
+				JsSIP_C.UPDATE,
+				undefined,
+				extraHeaders
+			).then(({ response, isError }) => {
+				if (!isError) {
+					succeeded = true;
+
+					return onSucceeded.call(this, response);
+				}
 			});
 		}
 
