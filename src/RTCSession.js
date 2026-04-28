@@ -3354,10 +3354,11 @@ module.exports = class RTCSession extends EventEmitter {
 			);
 		}
 
-		const promiseCreateOffer = (this._connectionPromiseQueue =
-			this._connectionPromiseQueue.then(() =>
-				this._createLocalDescription('offer', rtcOfferConstraints)
-			));
+		const promiseCreateOffer = this._connectionPromiseQueue.then(() =>
+			this._createLocalDescription('offer', rtcOfferConstraints)
+		);
+
+		this._connectionPromiseQueue = promiseCreateOffer.catch(() => undefined);
 
 		return promiseCreateOffer
 			.then(sdp => {
@@ -3371,8 +3372,6 @@ module.exports = class RTCSession extends EventEmitter {
 				return this.sendRequestAsync(JsSIP_C.INVITE, sdp, extraHeaders).then(
 					({ response, isError }) => {
 						if (!isError) {
-							succeeded = true;
-
 							return onSucceeded.call(this, response);
 						}
 					}
@@ -3393,6 +3392,7 @@ module.exports = class RTCSession extends EventEmitter {
 			if (succeeded) {
 				return;
 			}
+			succeeded = true;
 
 			// Handle Session Timers.
 			this._handleSessionTimersInIncomingResponse(response);
@@ -3404,7 +3404,10 @@ module.exports = class RTCSession extends EventEmitter {
 				return;
 			} else if (
 				!response.hasHeader('Content-Type') ||
-				response.getHeader('Content-Type').toLowerCase() !== 'application/sdp'
+				!response
+					.getHeader('Content-Type')
+					.toLowerCase()
+					.startsWith('application/sdp')
 			) {
 				onFailed.call(this, response);
 
@@ -3417,10 +3420,11 @@ module.exports = class RTCSession extends EventEmitter {
 			this.emit('sdp', e);
 
 			const answer = this._createRemoteDescription('answer', e.sdp);
-			const promiseSetAnswer = (this._connectionPromiseQueue =
-				this._connectionPromiseQueue.then(() =>
-					this._connection.setRemoteDescription(answer)
-				));
+			const promiseSetAnswer = this._connectionPromiseQueue.then(() =>
+				this._connection.setRemoteDescription(answer)
+			);
+
+			this._connectionPromiseQueue = promiseSetAnswer.catch(() => undefined);
 
 			return promiseSetAnswer
 				.then(() => {
@@ -3490,8 +3494,6 @@ module.exports = class RTCSession extends EventEmitter {
 					return this.sendRequestAsync(JsSIP_C.UPDATE, sdp, extraHeaders).then(
 						({ response, isError }) => {
 							if (!isError) {
-								succeeded = true;
-
 								return onSucceeded.call(this, response);
 							}
 						}
@@ -3510,8 +3512,6 @@ module.exports = class RTCSession extends EventEmitter {
 				extraHeaders
 			).then(({ response, isError }) => {
 				if (!isError) {
-					succeeded = true;
-
 					return onSucceeded.call(this, response);
 				}
 			});
@@ -3526,6 +3526,7 @@ module.exports = class RTCSession extends EventEmitter {
 			if (succeeded) {
 				return;
 			}
+			succeeded = true;
 
 			// Handle Session Timers.
 			this._handleSessionTimersInIncomingResponse(response);
@@ -3538,7 +3539,10 @@ module.exports = class RTCSession extends EventEmitter {
 					return;
 				} else if (
 					!response.hasHeader('Content-Type') ||
-					response.getHeader('Content-Type').toLowerCase() !== 'application/sdp'
+					!response
+						.getHeader('Content-Type')
+						.toLowerCase()
+						.startsWith('application/sdp')
 				) {
 					onFailed.call(this, response);
 
