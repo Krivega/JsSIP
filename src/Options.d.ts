@@ -31,6 +31,7 @@ export interface MessageEventMap {
 export interface SendOptionsOptions extends ExtraHeaders {
 	contentType?: string;
 	eventHandlers?: Partial<MessageEventMap>;
+	timeout?: number;
 }
 
 export class Options extends EventEmitter {

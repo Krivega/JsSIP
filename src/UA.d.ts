@@ -229,6 +229,10 @@ export interface NotifierOptions {
 	pending?: boolean;
 }
 
+export interface UASendOptionsOptions extends SendOptionsOptions {
+	timeout?: number;
+}
+
 declare enum UAStatus {
 	// UA status codes.
 	STATUS_INIT = 0,
@@ -276,7 +280,7 @@ export class UA extends EventEmitter {
 	sendOptions(
 		target: string | URI,
 		body?: string,
-		options?: SendOptionsOptions
+		options?: UASendOptionsOptions
 	): Options;
 
 	subscribe(
