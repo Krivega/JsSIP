@@ -17,7 +17,7 @@ export interface AcceptOptions extends ExtraHeaders {
 
 export interface MessageFailedEvent {
 	originator: `${Originator}`;
-	response: IncomingResponse;
+	response: IncomingResponse | null;
 	cause?: `${causes}`;
 }
 
@@ -28,21 +28,20 @@ export interface MessageEventMap {
 	failed: MessageFailedListener;
 }
 
-export interface SendMessageOptions extends ExtraHeaders {
+export interface SendOptionsOptions extends ExtraHeaders {
 	contentType?: string;
 	eventHandlers?: Partial<MessageEventMap>;
-	fromUserName?: string;
-	fromDisplayName?: string;
+	timeout?: number;
 }
 
-export class Message extends EventEmitter {
+export class Options extends EventEmitter {
 	get direction(): SessionDirection;
 
 	get local_identity(): NameAddrHeader;
 
 	get remote_identity(): NameAddrHeader;
 
-	send(target: string, body: string, options?: SendMessageOptions): void;
+	send(target: string, body: string, options?: SendOptionsOptions): void;
 
 	accept(options: AcceptOptions): void;
 
