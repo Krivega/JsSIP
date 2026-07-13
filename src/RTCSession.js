@@ -253,8 +253,6 @@ module.exports = class RTCSession extends EventEmitter {
 
 		// Custom session empty object for high level use.
 		this._data = {};
-
-		this._presentationSenders = new Set();
 	}
 
 	/**
@@ -1975,176 +1973,6 @@ module.exports = class RTCSession extends EventEmitter {
 		this.emit('newInfo', data);
 	}
 
-	_addOrReplacePresentationMediaStream(
-		stream,
-		{
-			directionAudio,
-			directionVideo,
-			degradationPreference,
-			sendEncodings,
-			onAddedTransceiver,
-		} = {}
-	) {
-		const senders = this._connection.getSenders();
-		const presentationSenders = senders.filter(sender => {
-			return this._hasPresentationSender(sender);
-		});
-
-		const isExistPresentationSender = presentationSenders.length > 0;
-
-		if (isExistPresentationSender) {
-			return Promise.all(
-				stream.getVideoTracks().map((track, index) => {
-					const sender = presentationSenders[index];
-
-					if (!sender) {
-						return Promise.resolve();
-					}
-
-					return sender.replaceTrack(track).then(() =>
-						applySenderParams({
-							sender,
-							sendEncodings,
-							degradationPreference,
-						})
-					);
-				})
-			);
-		} else {
-			const transceivers = this._connection.getTransceivers();
-			const isExistRecvOnlyTransceiver = transceivers.some(itemTransceiver => {
-				return itemTransceiver.currentDirection === 'recvonly';
-			});
-
-			if (isExistRecvOnlyTransceiver) {
-				return this._addMediaStreamInSender(stream, 'getVideoTracks', {
-					sendEncodings,
-					degradationPreference,
-					onAddedTransceiver,
-					directionAudio,
-					directionVideo,
-				});
-			}
-
-			return this._addMediaStreamInTransceiver(stream, 'getVideoTracks', {
-				sendEncodings,
-				degradationPreference,
-				onAddedTransceiver,
-				directionAudio,
-				directionVideo,
-			});
-		}
-	}
-
-	_markPresentationStream(stream) {
-		stream.getTracks().forEach(track => {
-			const sender = this._getSenderByTrack(track);
-
-			if (sender) {
-				this._presentationSenders.add(sender);
-			}
-		});
-	}
-
-	_hasPresentationSender(sender) {
-		return this._presentationSenders.has(sender);
-	}
-
-	_stopPresentationTracks() {
-		this._forEachSenders(sender => {
-			if (sender.track && this._hasPresentationSender(sender)) {
-				sender.track.stop();
-			}
-		});
-	}
-
-	startPresentation(
-		stream,
-		isNeedReinvite = true,
-		{
-			direction = undefined,
-			sendEncodings = undefined,
-			degradationPreference = undefined,
-			onAddedTransceiver = undefined,
-		} = {}
-	) {
-		logger.debug('presentation()');
-
-		return new Promise((resolve, reject) => {
-			const rejectWithError = errorMessage => {
-				this.emit('presentation:failed', new Error(errorMessage));
-				reject(new Error(errorMessage));
-			};
-
-			if (!stream) {
-				rejectWithError('Wrong mediaStream');
-			}
-
-			this.emit('presentation:start', stream);
-
-			const resolveSuccess = () => {
-				this.emit('presentation:started', stream);
-
-				resolve(stream);
-			};
-
-			Promise.resolve()
-				.then(() => {
-					return this._addOrReplacePresentationMediaStream(stream, {
-						sendEncodings,
-						degradationPreference,
-						onAddedTransceiver,
-						directionVideo: direction,
-						directionAudio: undefined,
-					});
-				})
-				.then(() => {
-					this._markPresentationStream(stream);
-
-					if (isNeedReinvite) {
-						this.renegotiate()
-							.then(resolveSuccess)
-							.catch(() => {
-								this._stopPresentationTracks();
-
-								rejectWithError('Fail reInvite');
-							});
-					} else {
-						resolveSuccess();
-					}
-				})
-				.catch(() => {
-					rejectWithError('Wrong mediaStream');
-				});
-		});
-	}
-
-	stopPresentation(stream) {
-		logger.debug('presentation()');
-
-		return new Promise((resolve, reject) => {
-			const rejectWithError = errorMessage => {
-				this.emit('presentation:failed', new Error(errorMessage));
-				reject(new Error(errorMessage));
-			};
-
-			if (!stream) {
-				rejectWithError('Wrong mediaStream');
-			}
-
-			this.emit('presentation:end', stream);
-
-			const resolveSuccess = () => {
-				this.emit('presentation:ended', stream);
-
-				resolve(stream);
-			};
-
-			this._stopPresentationTracks();
-			resolveSuccess();
-		});
-	}
-
 	/**
 	 * Check if RTCSession is ready for an outgoing re-INVITE or UPDATE with SDP.
 	 */
@@ -2238,8 +2066,6 @@ module.exports = class RTCSession extends EventEmitter {
 		}
 
 		this._ua.destroyRTCSession(this);
-
-		this._presentationSenders.clear();
 	}
 
 	/**
@@ -3820,11 +3646,7 @@ module.exports = class RTCSession extends EventEmitter {
 		this._forEachSenders(sender => {
 			const { track } = sender;
 
-			if (
-				track &&
-				track.kind === 'audio' &&
-				!this._hasPresentationSender(sender)
-			) {
+			if (track && track.kind === 'audio') {
 				track.enabled = !mute;
 			}
 		});
@@ -3834,11 +3656,7 @@ module.exports = class RTCSession extends EventEmitter {
 		this._forEachSenders(sender => {
 			const { track } = sender;
 
-			if (
-				track &&
-				track.kind === 'video' &&
-				!this._hasPresentationSender(sender)
-			) {
+			if (track && track.kind === 'video') {
 				track.enabled = !mute;
 			}
 		});

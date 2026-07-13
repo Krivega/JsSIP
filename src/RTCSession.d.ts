@@ -298,8 +298,6 @@ export type UpdateListener = ReInviteListener;
 export type ReferListener = (event: ReferEvent) => void;
 export type SDPListener = (event: SDPEvent) => void;
 export type IceCandidateListener = (event: IceCandidateEvent) => void;
-export type MediaStreamListener = (mediaStream: MediaStream) => void;
-export type ErrorListener = (error: Error) => void;
 
 export interface RTCSessionEventMap {
 	peerconnection: PeerConnectionListener;
@@ -327,11 +325,6 @@ export interface RTCSessionEventMap {
 	'peerconnection:createanswerfailed': GenericErrorListener;
 	'peerconnection:setlocaldescriptionfailed': GenericErrorListener;
 	'peerconnection:setremotedescriptionfailed': GenericErrorListener;
-	'presentation:start': MediaStreamListener;
-	'presentation:started': MediaStreamListener;
-	'presentation:end': MediaStreamListener;
-	'presentation:ended': MediaStreamListener;
-	'presentation:failed': ErrorListener;
 }
 
 declare enum SessionStatus {
@@ -450,19 +443,6 @@ export class RTCSession extends EventEmitter {
 			onAddedTransceiver?: TOnAddedTransceiver;
 		}
 	): Promise<void>;
-
-	startPresentation(
-		stream: MediaStream,
-		isNeedReinvite?: boolean,
-		options?: {
-			direction?: RTCRtpTransceiverDirection;
-			sendEncodings?: RTCRtpEncodingParameters[];
-			degradationPreference?: TDegradationPreference;
-			onAddedTransceiver?: TOnAddedTransceiver;
-		}
-	): Promise<MediaStream>;
-
-	stopPresentation(stream: MediaStream): Promise<MediaStream>;
 
 	addTransceiver(
 		trackOrKind: MediaStreamTrack | 'audio' | 'video',
