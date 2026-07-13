@@ -1993,13 +1993,23 @@ module.exports = class RTCSession extends EventEmitter {
 		const isExistPresentationSender = presentationSenders.length > 0;
 
 		if (isExistPresentationSender) {
-			stream.getVideoTracks().forEach((track, index) => {
-				const sender = presentationSenders[index];
+			return Promise.all(
+				stream.getVideoTracks().map((track, index) => {
+					const sender = presentationSenders[index];
 
-				sender.replaceTrack(track);
-			});
+					if (!sender) {
+						return Promise.resolve();
+					}
 
-			return Promise.resolve();
+					return sender.replaceTrack(track).then(() =>
+						applySenderParams({
+							sender,
+							sendEncodings,
+							degradationPreference,
+						})
+					);
+				})
+			);
 		} else {
 			const transceivers = this._connection.getTransceivers();
 			const isExistRecvOnlyTransceiver = transceivers.some(itemTransceiver => {
