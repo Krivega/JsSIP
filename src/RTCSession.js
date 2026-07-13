@@ -2,7 +2,6 @@
 /* eslint-disable no-invalid-this */
 
 const EventEmitter = require('events').EventEmitter;
-const { sequentPromises } = require('sequent-promises');
 const sdp_transform = require('sdp-transform');
 const Logger = require('./Logger');
 const JsSIP_C = require('./Constants');
@@ -1490,79 +1489,6 @@ module.exports = class RTCSession extends EventEmitter {
 		return this.renegotiate(newOptions, done, fail);
 	}
 
-	_getSenderByKindTrack(track) {
-		return this._connection.getSenders().find(sender => {
-			return sender.track && sender.track.kind == track.kind;
-		});
-	}
-
-	_getSenderByTrack(track) {
-		return this._connection.getSenders().find(sender => {
-			return sender.track == track;
-		});
-	}
-
-	replaceMediaStream(
-		stream,
-		{
-			directionVideo = undefined,
-			directionAudio = undefined,
-			deleteExisting = true,
-			addMissing = true,
-			forceRenegotiation = false,
-			sendEncodings = undefined,
-			degradationPreference = undefined,
-			onAddedTransceiver = undefined,
-		} = {}
-	) {
-		logger.debug('replaceMediaStream()');
-
-		let isChangedCountSenders = false;
-
-		const sequentReplaceTracks = stream.getTracks().map(track => () => {
-			const sender = this._getSenderByKindTrack(track);
-
-			if (sender && sender.track !== track) {
-				return sender.replaceTrack(track);
-			}
-
-			if (!sender && addMissing) {
-				isChangedCountSenders = true;
-
-				const streams = [stream];
-
-				return addTrackTransceiver(this._connection, track, streams, {
-					directionAudio,
-					directionVideo,
-					sendEncodings,
-					degradationPreference,
-				}).then(transceiver => {
-					if (onAddedTransceiver) {
-						return onAddedTransceiver(transceiver, track, streams);
-					}
-
-					return;
-				});
-			}
-
-			return Promise.resolve();
-		});
-
-		return sequentPromises(sequentReplaceTracks).then(() => {
-			if (deleteExisting) {
-				isChangedCountSenders =
-					this._removeMediaStream(this._localMediaStream) ||
-					isChangedCountSenders;
-			}
-
-			this._localMediaStream = stream;
-
-			if (forceRenegotiation || isChangedCountSenders) {
-				return this.renegotiate();
-			}
-		});
-	}
-
 	_addMediaStreamInTransceiver(
 		stream,
 		action,
@@ -1626,19 +1552,6 @@ module.exports = class RTCSession extends EventEmitter {
 				});
 			})
 		);
-	}
-
-	_removeMediaStream(stream) {
-		const sendersBySteam = this._connection.getSenders().filter(sender => {
-			return sender.track && stream.getTracks().includes(sender.track);
-		});
-		const isChangedConnection = sendersBySteam.length > 0;
-
-		sendersBySteam.forEach(sender => {
-			this._connection.removeTrack(sender);
-		});
-
-		return isChangedConnection;
 	}
 
 	/**
@@ -3806,50 +3719,5 @@ module.exports = class RTCSession extends EventEmitter {
 			audio,
 			video,
 		});
-	}
-
-	/**
-	 * Добавить новый RTCRtpTransceiver к текущему соединению.
-	 * Это расширенная обёртка над `RTCPeerConnection.addTransceiver()` (см. MDN).
-	 * Помимо стандартного поведения использует ту же логику, что и `addTrackTransceiver`:
-	 *  • поддержка Firefox < 109 без `addTransceiver`;
-	 *  • вызов `setEncodingsToSender` для установки `sendEncodings`/`degradationPreference`;
-	 */
-	addTransceiver(trackOrKind, init = {}, { degradationPreference } = {}) {
-		if (!this._connection) {
-			return Promise.reject(new Error('PeerConnection is not initialized'));
-		}
-
-		const { direction = 'sendrecv', sendEncodings, streams = [] } = init;
-
-		// Если передали настоящий MediaStreamTrack и поток, используем существующую логику
-		if (typeof trackOrKind !== 'string') {
-			return addTrackTransceiver(this._connection, trackOrKind, streams, {
-				directionAudio: direction,
-				directionVideo: direction,
-				sendEncodings,
-				degradationPreference,
-			});
-		}
-
-		// trackOrKind строка 'audio' | 'video'
-
-		const transceiver = this._connection.addTransceiver(trackOrKind, {
-			direction,
-			sendEncodings,
-			streams,
-		});
-
-		if (direction !== 'recvonly' && degradationPreference) {
-			return setEncodingsToSender({
-				sender: transceiver.sender,
-				sendEncodings,
-				degradationPreference,
-			}).then(() => {
-				return transceiver;
-			});
-		}
-
-		return Promise.resolve(transceiver);
 	}
 };

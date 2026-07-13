@@ -138,8 +138,6 @@ export interface HoldOptions extends ExtraHeaders {
 
 export interface RenegotiateOptions extends HoldOptions {
 	rtcOfferConstraints?: RTCOfferOptions;
-	sendEncodings?: RTCRtpEncodingParameters[];
-	degradationPreference?: TDegradationPreference;
 }
 
 export interface ConnectOptions extends ExtraHeaders {
@@ -429,24 +427,4 @@ export class RTCSession extends EventEmitter {
 		type: T,
 		listener: RTCSessionEventMap[T]
 	): this;
-
-	replaceMediaStream(
-		stream: MediaStream,
-		options?: {
-			directionVideo?: RTCRtpTransceiverDirection;
-			directionAudio?: RTCRtpTransceiverDirection;
-			deleteExisting?: boolean;
-			addMissing?: boolean;
-			forceRenegotiation?: boolean;
-			sendEncodings?: RTCRtpEncodingParameters[];
-			degradationPreference?: TDegradationPreference;
-			onAddedTransceiver?: TOnAddedTransceiver;
-		}
-	): Promise<void>;
-
-	addTransceiver(
-		trackOrKind: MediaStreamTrack | 'audio' | 'video',
-		init?: RTCRtpTransceiverInit,
-		options?: { degradationPreference?: TDegradationPreference }
-	): Promise<RTCRtpTransceiver>;
 }
