@@ -27,6 +27,7 @@ module.exports = class Dialog {
 
 		this._uac_pending_reply = false;
 		this._uas_pending_reply = false;
+		this._local_offer_pending = false;
 
 		if (!message.hasHeader('contact')) {
 			return {
@@ -111,6 +112,14 @@ module.exports = class Dialog {
 
 	get uas_pending_reply() {
 		return this._uas_pending_reply;
+	}
+
+	get local_offer_pending() {
+		return this._local_offer_pending;
+	}
+
+	set local_offer_pending(pending) {
+		this._local_offer_pending = pending;
 	}
 
 	isTerminated() {
@@ -253,8 +262,14 @@ module.exports = class Dialog {
 			request.method === JsSIP_C.INVITE ||
 			(request.method === JsSIP_C.UPDATE && request.body)
 		) {
-			if (this._uac_pending_reply === true) {
+			if (
+				this._uac_pending_reply === true ||
+				this._local_offer_pending === true
+			) {
+				// Do not pass an offer rejected with a final response to the dialog owner.
 				request.reply(491);
+
+				return false;
 			} else if (this._uas_pending_reply === true) {
 				const retryAfter = ((Math.random() * 10) | 0) + 1;
 

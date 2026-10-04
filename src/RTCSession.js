@@ -1903,6 +1903,12 @@ module.exports = class RTCSession extends EventEmitter {
 			return false;
 		}
 
+		if (this._dialog.local_offer_pending === true) {
+			logger.debug('isReadyToReOffer() | local SDP offer is pending');
+
+			return false;
+		}
+
 		// Another INVITE transaction is in progress.
 		if (
 			this._dialog.uac_pending_reply === true ||
@@ -3089,6 +3095,11 @@ module.exports = class RTCSession extends EventEmitter {
 	_sendReinvite(options = {}) {
 		logger.debug('sendReinvite()');
 
+		const dialog = this._dialog;
+
+		// Cover local offer creation before the outgoing SIP transaction exists.
+		dialog.local_offer_pending = true;
+
 		const extraHeaders = Utils.cloneArray(options.extraHeaders);
 		const eventHandlers = Utils.cloneObject(options.eventHandlers);
 		const rtcOfferConstraints =
@@ -3131,6 +3142,9 @@ module.exports = class RTCSession extends EventEmitter {
 			})
 			.catch(error => {
 				onFailed(error);
+			})
+			.finally(() => {
+				dialog.local_offer_pending = false;
 			});
 
 		async function onSucceeded(response) {
@@ -3227,6 +3241,10 @@ module.exports = class RTCSession extends EventEmitter {
 		}
 
 		if (sdpOffer) {
+			const dialog = this._dialog;
+
+			// Cover local offer creation before the outgoing SIP transaction exists.
+			dialog.local_offer_pending = true;
 			extraHeaders.push('Content-Type: application/sdp');
 
 			const promiseCreateOffer = (this._connectionPromiseQueue =
@@ -3253,6 +3271,9 @@ module.exports = class RTCSession extends EventEmitter {
 				})
 				.catch(error => {
 					onFailed.call(this, error);
+				})
+				.finally(() => {
+					dialog.local_offer_pending = false;
 				});
 		}
 
