@@ -14,6 +14,12 @@ const C = {
 	STATUS_TERMINATED: 3,
 };
 
+const LocalOfferState = {
+	IDLE: 'idle',
+	ACTIVE: 'active',
+	WAITING_FOR_RETRY: 'waiting-for-retry',
+};
+
 // RFC 3261 12.1.
 module.exports = class Dialog {
 	// Expose C object.
@@ -27,7 +33,7 @@ module.exports = class Dialog {
 
 		this._uac_pending_reply = false;
 		this._uas_pending_reply = false;
-		this._local_offer_pending = false;
+		this._local_offer_state = LocalOfferState.IDLE;
 
 		if (!message.hasHeader('contact')) {
 			return {
@@ -115,15 +121,34 @@ module.exports = class Dialog {
 	}
 
 	hasPendingLocalOffer() {
-		return this._local_offer_pending === true;
+		return this._local_offer_state !== LocalOfferState.IDLE;
 	}
 
 	beginLocalOffer() {
-		this._local_offer_pending = true;
+		this._local_offer_state = LocalOfferState.ACTIVE;
+	}
+
+	beginLocalOfferRetryWait() {
+		// Prevent another local offer, but let the peer's retry resolve the glare.
+		if (this._local_offer_state === LocalOfferState.ACTIVE) {
+			this._local_offer_state = LocalOfferState.WAITING_FOR_RETRY;
+		}
+	}
+
+	endLocalOfferRetryWait() {
+		// Restore the collision guard immediately before the local retry is sent.
+		if (this._local_offer_state === LocalOfferState.WAITING_FOR_RETRY) {
+			this._local_offer_state = LocalOfferState.ACTIVE;
+		}
 	}
 
 	endLocalOffer() {
-		this._local_offer_pending = false;
+		this._local_offer_state = LocalOfferState.IDLE;
+	}
+
+	isLocalOfferBlockingRemoteOffer() {
+		// A pending local operation must not reject the peer during the 491 backoff.
+		return this._local_offer_state === LocalOfferState.ACTIVE;
 	}
 
 	isTerminated() {
@@ -266,7 +291,10 @@ module.exports = class Dialog {
 			request.method === JsSIP_C.INVITE ||
 			(request.method === JsSIP_C.UPDATE && request.body)
 		) {
-			if (this._uac_pending_reply === true || this.hasPendingLocalOffer()) {
+			if (
+				this._uac_pending_reply === true ||
+				this.isLocalOfferBlockingRemoteOffer()
+			) {
 				// Do not pass an offer rejected with a final response to the dialog owner.
 				request.reply(491);
 

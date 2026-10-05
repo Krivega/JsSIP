@@ -96,8 +96,13 @@ module.exports = class DialogRequestSender {
 			if (this._reattempt) {
 				this._eventHandlers.onErrorResponse(response);
 			} else {
+				// Both peers may receive 491. Yield during the backoff so either retry can win.
+				this._dialog.beginLocalOfferRetryWait();
 				this._request.cseq = this._dialog.local_seqnum += 1;
 				this._reattemptTimer = setTimeout(() => {
+					// The local retry is active again, so incoming offers must be rejected.
+					this._dialog.endLocalOfferRetryWait();
+
 					if (!this._dialog.isTerminated()) {
 						this._reattempt = true;
 						this.send();
