@@ -86,6 +86,20 @@ const applySenderParams = ({
 	return setEncodingsToSender({ sender, sendEncodings, degradationPreference });
 };
 
+// Create operation-scoped cleanup so an older request cannot end a newer offer.
+const createLocalOfferEndHandler = dialog => {
+	let isEnded = false;
+
+	return () => {
+		if (isEnded) {
+			return;
+		}
+
+		isEnded = true;
+		dialog.endLocalOffer();
+	};
+};
+
 const IS_SUPPORT_ADD_TRANSCEIVER = !isFirefoxOrLower(109);
 
 const addTrackTransceiver = (
@@ -3106,6 +3120,7 @@ module.exports = class RTCSession extends EventEmitter {
 			options.rtcOfferConstraints || this._rtcOfferConstraints || null;
 
 		let succeeded = false;
+		const endLocalOffer = createLocalOfferEndHandler(dialog);
 
 		extraHeaders.push(`Contact: ${this._contact}`);
 		extraHeaders.push('Content-Type: application/sdp');
@@ -3144,7 +3159,7 @@ module.exports = class RTCSession extends EventEmitter {
 				onFailed(error);
 			})
 			.finally(() => {
-				dialog.endLocalOffer();
+				endLocalOffer();
 			});
 
 		async function onSucceeded(response) {
@@ -3194,6 +3209,9 @@ module.exports = class RTCSession extends EventEmitter {
 
 			return promiseSetAnswer
 				.then(() => {
+					// Make the session ready before notifying the caller about success.
+					endLocalOffer();
+
 					if (eventHandlers.succeeded) {
 						eventHandlers.succeeded(response);
 					}
@@ -3223,6 +3241,7 @@ module.exports = class RTCSession extends EventEmitter {
 	_sendUpdate(options = {}) {
 		logger.debug('sendUpdate()');
 
+		const dialog = this._dialog;
 		const extraHeaders = Utils.cloneArray(options.extraHeaders);
 		const eventHandlers = Utils.cloneObject(options.eventHandlers);
 		const rtcOfferConstraints =
@@ -3230,6 +3249,7 @@ module.exports = class RTCSession extends EventEmitter {
 		const sdpOffer = options.sdpOffer || false;
 
 		let succeeded = false;
+		const endLocalOffer = createLocalOfferEndHandler(dialog);
 
 		extraHeaders.push(`Contact: ${this._contact}`);
 
@@ -3241,8 +3261,6 @@ module.exports = class RTCSession extends EventEmitter {
 		}
 
 		if (sdpOffer) {
-			const dialog = this._dialog;
-
 			// Cover local offer creation before the outgoing SIP transaction exists.
 			dialog.beginLocalOffer();
 			extraHeaders.push('Content-Type: application/sdp');
@@ -3273,7 +3291,7 @@ module.exports = class RTCSession extends EventEmitter {
 					onFailed.call(this, error);
 				})
 				.finally(() => {
-					dialog.endLocalOffer();
+					endLocalOffer();
 				});
 		}
 
@@ -3332,6 +3350,9 @@ module.exports = class RTCSession extends EventEmitter {
 				return (this._connectionPromiseQueue = this._connectionPromiseQueue
 					.then(() => this._connection.setRemoteDescription(answer))
 					.then(() => {
+						// Make the session ready before notifying the caller about success.
+						endLocalOffer();
+
 						if (eventHandlers.succeeded) {
 							eventHandlers.succeeded(response);
 						}
