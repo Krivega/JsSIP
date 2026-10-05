@@ -1903,7 +1903,7 @@ module.exports = class RTCSession extends EventEmitter {
 			return false;
 		}
 
-		if (this._dialog.local_offer_pending === true) {
+		if (this._dialog.hasPendingLocalOffer()) {
 			logger.debug('isReadyToReOffer() | local SDP offer is pending');
 
 			return false;
@@ -3098,7 +3098,7 @@ module.exports = class RTCSession extends EventEmitter {
 		const dialog = this._dialog;
 
 		// Cover local offer creation before the outgoing SIP transaction exists.
-		dialog.local_offer_pending = true;
+		dialog.beginLocalOffer();
 
 		const extraHeaders = Utils.cloneArray(options.extraHeaders);
 		const eventHandlers = Utils.cloneObject(options.eventHandlers);
@@ -3144,7 +3144,7 @@ module.exports = class RTCSession extends EventEmitter {
 				onFailed(error);
 			})
 			.finally(() => {
-				dialog.local_offer_pending = false;
+				dialog.endLocalOffer();
 			});
 
 		async function onSucceeded(response) {
@@ -3244,7 +3244,7 @@ module.exports = class RTCSession extends EventEmitter {
 			const dialog = this._dialog;
 
 			// Cover local offer creation before the outgoing SIP transaction exists.
-			dialog.local_offer_pending = true;
+			dialog.beginLocalOffer();
 			extraHeaders.push('Content-Type: application/sdp');
 
 			const promiseCreateOffer = (this._connectionPromiseQueue =
@@ -3273,7 +3273,7 @@ module.exports = class RTCSession extends EventEmitter {
 					onFailed.call(this, error);
 				})
 				.finally(() => {
-					dialog.local_offer_pending = false;
+					dialog.endLocalOffer();
 				});
 		}
 

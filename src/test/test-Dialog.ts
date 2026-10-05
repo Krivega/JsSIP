@@ -16,7 +16,9 @@ type TInDialogRequest = {
 
 type TInDialogRequestFixture = {
 	dialog: {
+		beginLocalOffer: () => void;
 		receiveRequest: (request: TInDialogRequest) => void;
+		uac_pending_reply: boolean;
 	};
 	receiveRequest: jest.Mock;
 	request: TInDialogRequest;
@@ -40,16 +42,30 @@ const createInDialogRequestFixture = ({
 			on: jest.fn(),
 		},
 	};
-	const dialog = Object.assign(Object.create(Dialog.prototype), {
-		_incoming_ack_seqnum: null,
-		_owner: {
-			receiveRequest,
+	const owner = {
+		_ua: {
+			newDialog: jest.fn(),
 		},
-		_local_offer_pending: localOfferPending,
-		_remote_seqnum: 1,
-		_uac_pending_reply: uacPendingReply,
-		_uas_pending_reply: false,
-	});
+		receiveRequest,
+	};
+	const message = {
+		call_id: 'call-id',
+		cseq: 1,
+		from_tag: 'remote-tag',
+		getHeaders: jest.fn().mockReturnValue([]),
+		hasHeader: jest.fn().mockReturnValue(true),
+		parseHeader: jest.fn((header: string) => ({
+			uri: `sip:${header}@example.com`,
+		})),
+		to_tag: 'local-tag',
+	};
+	const dialog = new Dialog(owner, message, 'UAS');
+
+	dialog.uac_pending_reply = uacPendingReply;
+
+	if (localOfferPending) {
+		dialog.beginLocalOffer();
+	}
 
 	return { dialog, receiveRequest, request };
 };

@@ -114,12 +114,16 @@ module.exports = class Dialog {
 		return this._uas_pending_reply;
 	}
 
-	get local_offer_pending() {
-		return this._local_offer_pending;
+	hasPendingLocalOffer() {
+		return this._local_offer_pending === true;
 	}
 
-	set local_offer_pending(pending) {
-		this._local_offer_pending = pending;
+	beginLocalOffer() {
+		this._local_offer_pending = true;
+	}
+
+	endLocalOffer() {
+		this._local_offer_pending = false;
 	}
 
 	isTerminated() {
@@ -262,10 +266,7 @@ module.exports = class Dialog {
 			request.method === JsSIP_C.INVITE ||
 			(request.method === JsSIP_C.UPDATE && request.body)
 		) {
-			if (
-				this._uac_pending_reply === true ||
-				this._local_offer_pending === true
-			) {
+			if (this._uac_pending_reply === true || this.hasPendingLocalOffer()) {
 				// Do not pass an offer rejected with a final response to the dialog owner.
 				request.reply(491);
 

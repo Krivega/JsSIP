@@ -3,6 +3,28 @@ import './include/common';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const RTCSession = require('../RTCSession.js');
 
+type TDialogMock = {
+	beginLocalOffer: jest.Mock;
+	endLocalOffer: jest.Mock;
+	hasPendingLocalOffer: jest.Mock;
+	uac_pending_reply: boolean;
+	uas_pending_reply: boolean;
+};
+
+const createDialogMock = ({
+	localOfferPending = false,
+}: {
+	localOfferPending?: boolean;
+} = {}): TDialogMock => {
+	return {
+		beginLocalOffer: jest.fn(),
+		endLocalOffer: jest.fn(),
+		hasPendingLocalOffer: jest.fn().mockReturnValue(localOfferPending),
+		uac_pending_reply: false,
+		uas_pending_reply: false,
+	};
+};
+
 type TDeferred<T> = {
 	promise: Promise<T>;
 	resolve: (value: T) => void;
@@ -25,11 +47,7 @@ const createDeferred = <T>(): TDeferred<T> => {
 describe('RTCSession local offer serialization', () => {
 	test('does not start another local offer while the previous one is pending', () => {
 		const session = {
-			_dialog: {
-				local_offer_pending: true,
-				uac_pending_reply: false,
-				uas_pending_reply: false,
-			},
+			_dialog: createDialogMock({ localOfferPending: true }),
 			_rtcReady: true,
 		};
 
@@ -42,11 +60,10 @@ describe('RTCSession local offer serialization', () => {
 describe('RTCSession _sendReinvite queue recovery', () => {
 	test('keeps the local offer pending until re-INVITE processing completes', async () => {
 		const requestDeferred = createDeferred<{ isError: true }>();
+		const dialog = createDialogMock();
 		const session = {
 			_contact: '<sip:test@example.com>',
-			_dialog: {
-				local_offer_pending: false,
-			},
+			_dialog: dialog,
 			_status: 9,
 			_sessionTimers: {
 				running: false,
@@ -65,16 +82,17 @@ describe('RTCSession _sendReinvite queue recovery', () => {
 
 		const renegotiation = RTCSession.prototype._sendReinvite.call(session);
 
-		expect(session._dialog.local_offer_pending).toBe(true);
+		expect(dialog.beginLocalOffer).toHaveBeenCalledTimes(1);
+		expect(dialog.endLocalOffer).not.toHaveBeenCalled();
 
 		await session._connectionPromiseQueue;
 
-		expect(session._dialog.local_offer_pending).toBe(true);
+		expect(dialog.endLocalOffer).not.toHaveBeenCalled();
 
 		requestDeferred.resolve({ isError: true });
 		await renegotiation;
 
-		expect(session._dialog.local_offer_pending).toBe(false);
+		expect(dialog.endLocalOffer).toHaveBeenCalledTimes(1);
 	});
 
 	test('keeps queue usable after createLocalDescription failure', async () => {
@@ -87,9 +105,7 @@ describe('RTCSession _sendReinvite queue recovery', () => {
 
 		const session = {
 			_contact: '<sip:test@example.com>',
-			_dialog: {
-				local_offer_pending: false,
-			},
+			_dialog: createDialogMock(),
 			_status: 9,
 			_sessionTimers: {
 				running: false,
@@ -138,9 +154,7 @@ describe('RTCSession _sendReinvite queue recovery', () => {
 
 		const session = {
 			_contact: '<sip:test@example.com>',
-			_dialog: {
-				local_offer_pending: false,
-			},
+			_dialog: createDialogMock(),
 			_status: 9,
 			_sessionTimers: {
 				running: false,
@@ -184,11 +198,10 @@ describe('RTCSession _sendReinvite queue recovery', () => {
 describe('RTCSession _sendUpdate local offer state', () => {
 	test('keeps the local offer pending until UPDATE with SDP completes', async () => {
 		const requestDeferred = createDeferred<{ isError: true }>();
+		const dialog = createDialogMock();
 		const session = {
 			_contact: '<sip:test@example.com>',
-			_dialog: {
-				local_offer_pending: false,
-			},
+			_dialog: dialog,
 			_status: 9,
 			_sessionTimers: {
 				running: false,
@@ -208,15 +221,16 @@ describe('RTCSession _sendUpdate local offer state', () => {
 			sdpOffer: true,
 		});
 
-		expect(session._dialog.local_offer_pending).toBe(true);
+		expect(dialog.beginLocalOffer).toHaveBeenCalledTimes(1);
+		expect(dialog.endLocalOffer).not.toHaveBeenCalled();
 
 		await session._connectionPromiseQueue;
 
-		expect(session._dialog.local_offer_pending).toBe(true);
+		expect(dialog.endLocalOffer).not.toHaveBeenCalled();
 
 		requestDeferred.resolve({ isError: true });
 		await update;
 
-		expect(session._dialog.local_offer_pending).toBe(false);
+		expect(dialog.endLocalOffer).toHaveBeenCalledTimes(1);
 	});
 });
