@@ -10,6 +10,7 @@ const EventHandlers = {
 	onErrorResponse: () => {},
 	onAuthenticated: () => {},
 	onDialogError: () => {},
+	onReattempt: () => undefined,
 };
 
 module.exports = class DialogRequestSender {
@@ -100,13 +101,7 @@ module.exports = class DialogRequestSender {
 				this._dialog.beginLocalOfferRetryWait();
 				this._request.cseq = this._dialog.local_seqnum += 1;
 				this._reattemptTimer = setTimeout(() => {
-					// The local retry is active again, so incoming offers must be rejected.
-					this._dialog.endLocalOfferRetryWait();
-
-					if (!this._dialog.isTerminated()) {
-						this._reattempt = true;
-						this.send();
-					}
+					this._reattemptRequest();
 				}, 1000);
 			}
 		} else if (response.status_code >= 200 && response.status_code < 300) {
@@ -114,5 +109,37 @@ module.exports = class DialogRequestSender {
 		} else if (response.status_code >= 300) {
 			this._eventHandlers.onErrorResponse(response);
 		}
+	}
+
+	// Retry a request after a 491 backoff, rebuilding its body when required.
+	_reattemptRequest() {
+		// Do not restart a request after its dialog has already ended.
+		if (this._dialog.isTerminated()) {
+			return;
+		}
+
+		// Restore the collision guard while the new local offer is being prepared.
+		this._dialog.endLocalOfferRetryWait();
+
+		// Let the session asynchronously prepare a body valid for its current state.
+		Promise.resolve()
+			.then(() => this._eventHandlers.onReattempt())
+			.then(body => {
+				// The dialog may have ended while the new body was being prepared.
+				if (this._dialog.isTerminated()) {
+					return;
+				}
+
+				if (body !== undefined) {
+					this._request.body = body;
+				}
+
+				// Mark and send the single retry allowed after the initial 491 response.
+				this._reattempt = true;
+				this.send();
+			})
+			.catch(error => {
+				this._eventHandlers.onErrorResponse(error);
+			});
 	}
 };

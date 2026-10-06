@@ -70,7 +70,7 @@ describe('DialogRequestSender 491 recovery', () => {
 		jest.useRealTimers();
 	});
 
-	test('retries the outgoing re-INVITE without reporting a terminal error', () => {
+	test('retries the outgoing re-INVITE without reporting a terminal error', async () => {
 		const onErrorResponse = jest.fn();
 		const dialog = {
 			_ua: {},
@@ -94,12 +94,49 @@ describe('DialogRequestSender 491 recovery', () => {
 		expect(request.cseq).toBe(11);
 		expect(sender.send).not.toHaveBeenCalled();
 
-		jest.advanceTimersByTime(1000);
+		await jest.advanceTimersByTimeAsync(1000);
 
 		expect(sender.send).toHaveBeenCalledTimes(1);
 	});
 
-	test('allows an incoming re-INVITE through Dialog while waiting to retry after 491', () => {
+	test('waits for a fresh SDP offer before retrying the re-INVITE', async () => {
+		let resolveOffer: ((sdp: string) => void) | undefined;
+		const freshOffer: Promise<string> = new Promise(resolve => {
+			resolveOffer = resolve;
+		});
+		const onReattempt = jest.fn().mockReturnValue(freshOffer);
+		const dialog = {
+			_ua: {},
+			beginLocalOfferRetryWait: jest.fn(),
+			endLocalOfferRetryWait: jest.fn(),
+			isTerminated: jest.fn().mockReturnValue(false),
+			local_seqnum: 10,
+		};
+		const request = {
+			body: 'old-offer',
+			cseq: 10,
+			method: 'INVITE',
+		};
+		const sender = new DialogRequestSender(dialog, request, {
+			onReattempt,
+		});
+
+		sender.send = jest.fn();
+		sender._receiveResponse({ method: 'INVITE', status_code: 491 });
+		jest.advanceTimersByTime(1000);
+		await Promise.resolve();
+
+		expect(onReattempt).toHaveBeenCalledTimes(1);
+		expect(sender.send).not.toHaveBeenCalled();
+
+		resolveOffer?.('fresh-offer');
+		await jest.advanceTimersByTimeAsync(0);
+
+		expect(request.body).toBe('fresh-offer');
+		expect(sender.send).toHaveBeenCalledTimes(1);
+	});
+
+	test('allows an incoming re-INVITE through Dialog while waiting to retry after 491', async () => {
 		const receiveRequest = jest.fn();
 		const dialog = createDialog(receiveRequest);
 		const outgoingRequest = {
@@ -124,7 +161,7 @@ describe('DialogRequestSender 491 recovery', () => {
 		expect(incomingRequest.reply).not.toHaveBeenCalled();
 		expect(receiveRequest).toHaveBeenCalledWith(incomingRequest);
 
-		jest.advanceTimersByTime(1000);
+		await jest.advanceTimersByTimeAsync(1000);
 
 		expect(sender.send).toHaveBeenCalledTimes(1);
 
@@ -137,7 +174,7 @@ describe('DialogRequestSender 491 recovery', () => {
 		expect(receiveRequest).not.toHaveBeenCalledWith(collidingRequest);
 	});
 
-	test('does not reactivate a completed local offer when the retry timer fires', () => {
+	test('does not reactivate a completed local offer when the retry timer fires', async () => {
 		const receiveRequest = jest.fn();
 		const dialog = createDialog(receiveRequest);
 		const outgoingRequest = {
@@ -152,7 +189,7 @@ describe('DialogRequestSender 491 recovery', () => {
 		sender._receiveResponse({ method: 'INVITE', status_code: 491 });
 		dialog.endLocalOffer();
 
-		jest.advanceTimersByTime(1000);
+		await jest.advanceTimersByTimeAsync(1000);
 
 		expect(dialog.hasPendingLocalOffer()).toBe(false);
 
@@ -164,7 +201,7 @@ describe('DialogRequestSender 491 recovery', () => {
 		expect(receiveRequest).toHaveBeenCalledWith(incomingRequest);
 	});
 
-	test('reports a second 491 without scheduling a third re-INVITE', () => {
+	test('reports a second 491 without scheduling a third re-INVITE', async () => {
 		const onErrorResponse = jest.fn();
 		const dialog = {
 			_ua: {},
@@ -184,9 +221,9 @@ describe('DialogRequestSender 491 recovery', () => {
 
 		sender.send = jest.fn();
 		sender._receiveResponse({ method: 'INVITE', status_code: 491 });
-		jest.advanceTimersByTime(1000);
+		await jest.advanceTimersByTimeAsync(1000);
 		sender._receiveResponse(secondResponse);
-		jest.advanceTimersByTime(1000);
+		await jest.advanceTimersByTimeAsync(1000);
 
 		expect(onErrorResponse).toHaveBeenCalledTimes(1);
 		expect(onErrorResponse).toHaveBeenCalledWith(secondResponse);
