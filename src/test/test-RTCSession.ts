@@ -19,6 +19,7 @@ type TDialogFixture = {
 		receiveRequest: jest.Mock;
 	};
 	receiveRequest: (request: object) => void;
+	terminate: () => void;
 	uac_pending_reply: boolean;
 	uas_pending_reply: boolean;
 };
@@ -30,6 +31,7 @@ const createDialogFixture = ({
 } = {}): TDialogFixture => {
 	const owner = {
 		_ua: {
+			destroyDialog: jest.fn(),
 			newDialog: jest.fn(),
 		},
 		receiveRequest: jest.fn(),
@@ -94,10 +96,16 @@ type TPeerConnectionFixture = {
 type TRtcSessionFixture = {
 	failed: jest.Mock;
 	session: {
+		[key: string]: unknown;
 		_connectionPromiseQueue: Promise<unknown>;
 		_status: number;
+		terminate: jest.Mock;
 	};
 	succeeded: jest.Mock;
+};
+
+type TRequestEventHandlers = {
+	onReattemptCanceled: () => void;
 };
 
 type TCompetingOffer = {
@@ -216,6 +224,9 @@ const createRtcSessionFixture = ({
 		_remoteHold: false,
 		_rtcAnswerConstraints: null,
 		_rtcOfferConstraints: null,
+		_rtcReady: true,
+		_sendReinvite: RTCSession.prototype._sendReinvite,
+		_sendUpdate: RTCSession.prototype._sendUpdate,
 		_sessionTimers: {
 			running: false,
 			currentExpires: 90,
@@ -226,12 +237,17 @@ const createRtcSessionFixture = ({
 		_confirmed: jest.fn(),
 		_setACKTimer: jest.fn(),
 		_setInvite2xxTimer: jest.fn(),
+		_setLocalMediaStatus: jest.fn(),
+		_terminateOnMediaRenegotiationFailure:
+			RTCSession.prototype._terminateOnMediaRenegotiationFailure,
 		emit: jest.fn(),
+		isReadyToReOffer: RTCSession.prototype.isReadyToReOffer,
 		onDialogError: jest.fn(),
 		onRequestTimeout: jest.fn(),
 		onTransportError: jest.fn(),
 		sendRequest: RTCSession.prototype.sendRequest,
 		sendRequestAsync: RTCSession.prototype.sendRequestAsync,
+		terminate: jest.fn(),
 	};
 
 	dialog.owner.receiveRequest.mockImplementation(request => {
@@ -734,6 +750,110 @@ describe('RTCSession local offer recovery after 491', () => {
 		expect(dialog.uac_pending_reply).toBe(false);
 		expect(succeeded).toHaveBeenCalledTimes(1);
 		expect(failed).not.toHaveBeenCalled();
+	});
+});
+
+describe('RTCSession canceled local offer retry', () => {
+	let dialog: TDialogFixture;
+	let fail: jest.Mock;
+	let requestEventHandlers: TRequestEventHandlers | undefined;
+	let session: TRtcSessionFixture['session'];
+
+	beforeEach(() => {
+		const { connection, createLocalDescription } =
+			createPeerConnectionFixture();
+
+		requestEventHandlers = undefined;
+		dialog = createDialogFixture();
+		fail = jest.fn();
+
+		({ session } = createRtcSessionFixture({
+			connection,
+			createLocalDescription,
+			dialog,
+		}));
+
+		session.sendRequest = jest.fn(
+			(
+				_method: string,
+				requestOptions: { eventHandlers: TRequestEventHandlers }
+			) => {
+				requestEventHandlers = requestOptions.eventHandlers;
+			}
+		);
+	});
+
+	test('does not create an offer after the session terminates while waiting for queued operations', async () => {
+		const queuedOperation = createDeferred<void>();
+		const createLocalDescription = jest.fn();
+		const queuedSession = {
+			_connectionPromiseQueue: queuedOperation.promise,
+			_createLocalDescription: createLocalDescription,
+			_mangleOffer: (sdp: string) => sdp,
+			_status: 9,
+			emit: jest.fn(),
+		};
+
+		// Queue offer creation behind an unfinished WebRTC operation.
+		const offer = RTCSession.prototype._createQueuedLocalOffer.call(
+			queuedSession,
+			null
+		);
+
+		// Terminate the session before the queued operation releases the offer.
+		queuedSession._status = 8;
+		queuedOperation.resolve(undefined);
+
+		await expect(offer).rejects.toThrow('Session terminated');
+		expect(createLocalDescription).not.toHaveBeenCalled();
+	});
+
+	test('rejects a canceled re-INVITE without terminating the session twice', async () => {
+		// Start renegotiation and keep its outgoing request unresolved.
+		const renegotiation = RTCSession.prototype.renegotiate.call(
+			session,
+			{},
+			undefined,
+			fail
+		);
+		const renegotiationError = renegotiation.catch(error => error);
+
+		await session._connectionPromiseQueue;
+		await Promise.resolve();
+
+		// End the call before the asynchronously prepared retry can be sent.
+		session._status = 8;
+		dialog.terminate();
+		requestEventHandlers?.onReattemptCanceled();
+
+		await expect(renegotiationError).resolves.toBeUndefined();
+		expect(session.terminate).not.toHaveBeenCalled();
+		expect(fail).toHaveBeenCalledTimes(1);
+		expect(dialog.hasPendingLocalOffer()).toBe(false);
+	});
+
+	test('rejects a canceled UPDATE without terminating the session twice', async () => {
+		// Start renegotiation and keep its outgoing request unresolved.
+		const renegotiation = RTCSession.prototype.renegotiate.call(
+			session,
+			{ useUpdate: true },
+			undefined,
+			fail
+		);
+		const renegotiationError = renegotiation.catch(error => error);
+
+		await session._connectionPromiseQueue;
+		await Promise.resolve();
+
+		// End the call before the asynchronously prepared retry can be sent.
+		session._status = 8;
+		dialog.terminate();
+		requestEventHandlers?.onReattemptCanceled();
+
+		await expect(renegotiationError).resolves.toBeUndefined();
+		expect(session.terminate).not.toHaveBeenCalled();
+		expect(fail).toHaveBeenCalledTimes(1);
+		expect(dialog.hasPendingLocalOffer()).toBe(false);
 	});
 });
 

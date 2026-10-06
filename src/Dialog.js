@@ -152,7 +152,8 @@ module.exports = class Dialog {
 	}
 
 	isTerminated() {
-		return this._status === C.STATUS_TERMINATED;
+		// Dialog lifecycle is stored in _state; _status belongs to RTCSession.
+		return this._state === C.STATUS_TERMINATED;
 	}
 
 	update(message, type) {

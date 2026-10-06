@@ -1323,6 +1323,21 @@ module.exports = class RTCSession extends EventEmitter {
 	}
 
 	/**
+	 * Terminate an active session after a local media renegotiation failure.
+	 */
+	_terminateOnMediaRenegotiationFailure(reasonPhrase) {
+		if (this._status === C.STATUS_TERMINATED) {
+			return;
+		}
+
+		this.terminate({
+			cause: JsSIP_C.causes.WEBRTC_ERROR,
+			status_code: 500,
+			reason_phrase: reasonPhrase,
+		});
+	}
+
+	/**
 	 * Hold
 	 */
 	hold(options = {}, done) {
@@ -1353,11 +1368,7 @@ module.exports = class RTCSession extends EventEmitter {
 				}
 			},
 			failed: () => {
-				this.terminate({
-					cause: JsSIP_C.causes.WEBRTC_ERROR,
-					status_code: 500,
-					reason_phrase: 'Hold Failed',
-				});
+				this._terminateOnMediaRenegotiationFailure('Hold Failed');
 			},
 		};
 
@@ -1405,11 +1416,7 @@ module.exports = class RTCSession extends EventEmitter {
 				}
 			},
 			failed: () => {
-				this.terminate({
-					cause: JsSIP_C.causes.WEBRTC_ERROR,
-					status_code: 500,
-					reason_phrase: 'Unhold Failed',
-				});
+				this._terminateOnMediaRenegotiationFailure('Unhold Failed');
 			},
 		};
 
@@ -1458,11 +1465,10 @@ module.exports = class RTCSession extends EventEmitter {
 					resolve(true);
 				},
 				failed: () => {
-					this.terminate({
-						cause: JsSIP_C.causes.WEBRTC_ERROR,
-						status_code: 500,
-						reason_phrase: 'Media Renegotiation Failed',
-					});
+					this._terminateOnMediaRenegotiationFailure(
+						'Media Renegotiation Failed'
+					);
+
 					if (fail) {
 						fail();
 					}
@@ -1653,6 +1659,9 @@ module.exports = class RTCSession extends EventEmitter {
 				body: sdp,
 				eventHandlers: {
 					onReattempt,
+					onReattemptCanceled: () => {
+						reject(new Error('Request reattempt canceled'));
+					},
 					onSuccessResponse: response => {
 						resolve({ response, isError: false });
 					},
@@ -3109,9 +3118,14 @@ module.exports = class RTCSession extends EventEmitter {
 	 */
 	_createQueuedLocalOffer(rtcOfferConstraints) {
 		// A competing remote offer may roll back the previous local description.
-		const promiseCreateOffer = this._connectionPromiseQueue.then(() =>
-			this._createLocalDescription('offer', rtcOfferConstraints)
-		);
+		const promiseCreateOffer = this._connectionPromiseQueue.then(() => {
+			// Do not access a PeerConnection closed while this operation was queued.
+			if (this._status === C.STATUS_TERMINATED) {
+				throw new Error('Session terminated');
+			}
+
+			return this._createLocalDescription('offer', rtcOfferConstraints);
+		});
 
 		this._connectionPromiseQueue = promiseCreateOffer.catch(() => undefined);
 

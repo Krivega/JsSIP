@@ -26,11 +26,24 @@ type TDialog = {
 	isTerminated: () => boolean;
 	local_seqnum: number;
 	receiveRequest: (request: TIncomingReinvite) => void;
+	terminate: () => void;
+};
+
+type TOfferRequest = {
+	body: string;
+	cseq: number;
+	method: string;
+};
+
+type TDialogRequestSender = {
+	_receiveResponse: (response: { method: string; status_code: number }) => void;
+	send: jest.Mock;
 };
 
 const createDialog = (receiveRequest: jest.Mock): TDialog => {
 	const owner = {
 		_ua: {
+			destroyDialog: jest.fn(),
 			newDialog: jest.fn(),
 		},
 		receiveRequest,
@@ -48,6 +61,18 @@ const createDialog = (receiveRequest: jest.Mock): TDialog => {
 	};
 
 	return new Dialog(owner, message, 'UAS');
+};
+
+const createDialogRequestSender = (
+	dialog: TDialog,
+	request: TOfferRequest,
+	eventHandlers: object
+): TDialogRequestSender => {
+	const sender = new DialogRequestSender(dialog, request, eventHandlers);
+
+	sender.send = jest.fn();
+
+	return sender;
 };
 
 const createIncomingReinvite = (cseq: number): TIncomingReinvite => ({
@@ -164,6 +189,87 @@ describe('DialogRequestSender 491 recovery', () => {
 		expect(onReattempt).toHaveBeenCalledTimes(1);
 		expect(request.body).toBe('fresh-offer');
 		expect(sender.send).toHaveBeenCalledTimes(1);
+	});
+
+	describe('late offer errors after dialog termination', () => {
+		let rejectOffer: ((error: Error) => void) | undefined;
+		let dialog: TDialog;
+		let onErrorResponse: jest.Mock;
+		let onReattempt: jest.Mock;
+		let onReattemptCanceled: jest.Mock;
+
+		beforeEach(() => {
+			rejectOffer = undefined;
+			dialog = createDialog(jest.fn());
+			dialog.local_seqnum = 10;
+			dialog.beginLocalOffer();
+			onErrorResponse = jest.fn();
+			onReattemptCanceled = jest.fn();
+			onReattempt = jest.fn(
+				() =>
+					new Promise((_resolve, reject) => {
+						rejectOffer = reject;
+					})
+			);
+		});
+
+		test('discards a late re-INVITE offer error', async () => {
+			const request = {
+				body: 'old-offer',
+				cseq: 10,
+				method: 'INVITE',
+			};
+			const sender = createDialogRequestSender(dialog, request, {
+				onErrorResponse,
+				onReattempt,
+				onReattemptCanceled,
+			});
+
+			// Start preparing the fresh offer and leave it pending.
+			sender._receiveResponse({ method: 'INVITE', status_code: 491 });
+			jest.advanceTimersByTime(1000);
+			await Promise.resolve();
+
+			expect(onReattempt).toHaveBeenCalledTimes(1);
+
+			// Simulate createOffer failing only after the dialog has ended.
+			dialog.terminate();
+			rejectOffer?.(new Error('InvalidStateError'));
+			await jest.advanceTimersByTimeAsync(0);
+
+			expect(onReattemptCanceled).toHaveBeenCalledTimes(1);
+			expect(onErrorResponse).not.toHaveBeenCalled();
+			expect(sender.send).not.toHaveBeenCalled();
+		});
+
+		test('discards a late UPDATE offer error', async () => {
+			const request = {
+				body: 'old-offer',
+				cseq: 10,
+				method: 'UPDATE',
+			};
+			const sender = createDialogRequestSender(dialog, request, {
+				onErrorResponse,
+				onReattempt,
+				onReattemptCanceled,
+			});
+
+			// Start preparing the fresh offer and leave it pending.
+			sender._receiveResponse({ method: 'UPDATE', status_code: 491 });
+			jest.advanceTimersByTime(1000);
+			await Promise.resolve();
+
+			expect(onReattempt).toHaveBeenCalledTimes(1);
+
+			// Simulate createOffer failing only after the dialog has ended.
+			dialog.terminate();
+			rejectOffer?.(new Error('InvalidStateError'));
+			await jest.advanceTimersByTimeAsync(0);
+
+			expect(onReattemptCanceled).toHaveBeenCalledTimes(1);
+			expect(onErrorResponse).not.toHaveBeenCalled();
+			expect(sender.send).not.toHaveBeenCalled();
+		});
 	});
 
 	test('allows an incoming re-INVITE through Dialog while waiting to retry after 491', async () => {

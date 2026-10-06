@@ -11,6 +11,7 @@ const EventHandlers = {
 	onAuthenticated: () => {},
 	onDialogError: () => {},
 	onReattempt: () => undefined,
+	onReattemptCanceled: () => {},
 };
 
 module.exports = class DialogRequestSender {
@@ -115,7 +116,7 @@ module.exports = class DialogRequestSender {
 	// Retry a request after a 491 backoff, rebuilding its body when required.
 	_reattemptRequest() {
 		// Do not restart a request after its dialog has already ended.
-		if (this._dialog.isTerminated()) {
+		if (this._cancelReattemptIfDialogTerminated()) {
 			return;
 		}
 
@@ -127,7 +128,7 @@ module.exports = class DialogRequestSender {
 			.then(() => this._eventHandlers.onReattempt())
 			.then(body => {
 				// The dialog may have ended while the new body was being prepared.
-				if (this._dialog.isTerminated()) {
+				if (this._cancelReattemptIfDialogTerminated()) {
 					return;
 				}
 
@@ -140,7 +141,23 @@ module.exports = class DialogRequestSender {
 				this.send();
 			})
 			.catch(error => {
+				// Ignore a late preparation error after the dialog has ended.
+				if (this._cancelReattemptIfDialogTerminated()) {
+					return;
+				}
+
 				this._eventHandlers.onErrorResponse(error);
 			});
+	}
+
+	// Cancel the pending retry once its dialog can no longer send requests.
+	_cancelReattemptIfDialogTerminated() {
+		if (!this._dialog.isTerminated()) {
+			return false;
+		}
+
+		this._eventHandlers.onReattemptCanceled();
+
+		return true;
 	}
 };

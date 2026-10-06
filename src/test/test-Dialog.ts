@@ -17,7 +17,9 @@ type TInDialogRequest = {
 type TInDialogRequestFixture = {
 	dialog: {
 		beginLocalOffer: () => void;
+		isTerminated: () => boolean;
 		receiveRequest: (request: TInDialogRequest) => void;
+		terminate: () => void;
 		uac_pending_reply: boolean;
 	};
 	receiveRequest: jest.Mock;
@@ -44,6 +46,7 @@ const createInDialogRequestFixture = ({
 	};
 	const owner = {
 		_ua: {
+			destroyDialog: jest.fn(),
 			newDialog: jest.fn(),
 		},
 		receiveRequest,
@@ -71,6 +74,14 @@ const createInDialogRequestFixture = ({
 };
 
 describe('Dialog re-INVITE collision handling', () => {
+	test('reports its terminated state after termination', () => {
+		const { dialog } = createInDialogRequestFixture();
+
+		dialog.terminate();
+
+		expect(dialog.isTerminated()).toBe(true);
+	});
+
 	test('does not forward a re-INVITE rejected with 491 during an outgoing transaction', () => {
 		const { dialog, receiveRequest, request } = createInDialogRequestFixture({
 			uacPendingReply: true,
