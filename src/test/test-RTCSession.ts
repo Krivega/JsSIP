@@ -100,7 +100,7 @@ type TRtcSessionFixture = {
 	succeeded: jest.Mock;
 };
 
-type TCompetingReinvite = {
+type TCompetingOffer = {
 	body: string;
 	cseq: number;
 	getHeader: () => string;
@@ -212,6 +212,7 @@ const createRtcSessionFixture = ({
 		_onunhold: jest.fn(),
 		_processInDialogSdpOffer: RTCSession.prototype._processInDialogSdpOffer,
 		_receiveReinvite: RTCSession.prototype._receiveReinvite,
+		_receiveUpdate: RTCSession.prototype._receiveUpdate,
 		_remoteHold: false,
 		_rtcAnswerConstraints: null,
 		_rtcOfferConstraints: null,
@@ -240,7 +241,10 @@ const createRtcSessionFixture = ({
 	return { failed, session, succeeded };
 };
 
-const createCompetingReinvite = (): TCompetingReinvite => {
+const createCompetingOffer = (
+	method: 'INVITE' | 'UPDATE',
+	finalTransactionState: number
+): TCompetingOffer => {
 	const stateChangedListeners: Set<() => void> = new Set();
 	const serverTransaction = {
 		state: Transactions.C.STATUS_PROCEEDING,
@@ -261,14 +265,14 @@ const createCompetingReinvite = (): TCompetingReinvite => {
 		cseq: 2,
 		getHeader: () => 'application/sdp',
 		hasHeader: (header: string) => header.toLowerCase() === 'content-type',
-		method: 'INVITE',
+		method,
 		parseSDP: () => ({ media: [] }),
 		reply: jest.fn((statusCode: number, ...args: unknown[]) => {
 			if (statusCode !== 200) {
 				return;
 			}
 
-			serverTransaction.state = Transactions.C.STATUS_ACCEPTED;
+			serverTransaction.state = finalTransactionState;
 			for (const listener of stateChangedListeners) {
 				listener();
 			}
@@ -563,7 +567,7 @@ describe('RTCSession _sendReinvite queue recovery', () => {
 	});
 });
 
-describe('RTCSession re-INVITE recovery after 491', () => {
+describe('RTCSession local offer recovery after 491', () => {
 	beforeEach(() => {
 		jest.useFakeTimers();
 	});
@@ -572,7 +576,7 @@ describe('RTCSession re-INVITE recovery after 491', () => {
 		jest.useRealTimers();
 	});
 
-	test('creates a fresh local offer before retrying after a competing offer', async () => {
+	test('creates a fresh local offer before retrying an re-INVITE', async () => {
 		const dialog = createDialogFixture();
 		const { connection, createLocalDescription } =
 			createPeerConnectionFixture();
@@ -604,7 +608,10 @@ describe('RTCSession re-INVITE recovery after 491', () => {
 
 		expect(dialog.uac_pending_reply).toBe(false);
 
-		const incomingReinvite = createCompetingReinvite();
+		const incomingReinvite = createCompetingOffer(
+			'INVITE',
+			Transactions.C.STATUS_ACCEPTED
+		);
 
 		// Route the competing offer through Dialog and RTCSession to create its answer.
 		dialog.receiveRequest(incomingReinvite);
@@ -645,6 +652,83 @@ describe('RTCSession re-INVITE recovery after 491', () => {
 		});
 
 		await renegotiation;
+
+		expect(connection.signalingState).toBe('stable');
+		expect(dialog.uac_pending_reply).toBe(false);
+		expect(succeeded).toHaveBeenCalledTimes(1);
+		expect(failed).not.toHaveBeenCalled();
+	});
+
+	test('creates a fresh local offer before retrying an UPDATE', async () => {
+		const dialog = createDialogFixture();
+		const { connection, createLocalDescription } =
+			createPeerConnectionFixture();
+		const clientTransactions = createClientTransactionsFixture(dialog);
+		const { failed, session, succeeded } = createRtcSessionFixture({
+			connection,
+			createLocalDescription,
+			dialog,
+		});
+
+		// Start the local renegotiation and send the initial UPDATE.
+		const update = RTCSession.prototype._sendUpdate.call(session, {
+			eventHandlers: { failed, succeeded },
+			sdpOffer: true,
+		});
+
+		await session._connectionPromiseQueue;
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(clientTransactions).toHaveLength(1);
+		expect(dialog.uac_pending_reply).toBe(true);
+
+		// Put the local offer into backoff by rejecting the initial request with 491.
+		clientTransactions[0].receiveResponse({
+			method: 'UPDATE',
+			status_code: 491,
+		});
+
+		expect(dialog.uac_pending_reply).toBe(false);
+
+		const incomingUpdate = createCompetingOffer(
+			'UPDATE',
+			Transactions.C.STATUS_COMPLETED
+		);
+
+		// Process the peer's UPDATE while the local request is waiting to retry.
+		dialog.receiveRequest(incomingUpdate);
+		await session._connectionPromiseQueue;
+		await Promise.resolve();
+
+		expect(connection.signalingState).toBe('stable');
+		expect(incomingUpdate.reply).toHaveBeenCalledTimes(1);
+
+		const [statusCode, , , responseBody] = incomingUpdate.reply.mock.calls[0];
+
+		expect(statusCode).toBe(200);
+		expect(responseBody).toBe('peer-answer');
+		expect(dialog.uas_pending_reply).toBe(false);
+		expect(session._status).toBe(9);
+
+		await jest.advanceTimersByTimeAsync(1000);
+
+		// Retry the UPDATE with a new offer created after the competing exchange.
+		expect(clientTransactions).toHaveLength(2);
+		expect(createLocalDescription).toHaveBeenCalledTimes(3);
+		expect(clientTransactions[1].request.body).toBe('local-offer-2');
+		expect(connection.signalingState).toBe('have-local-offer');
+		expect(dialog.uac_pending_reply).toBe(true);
+
+		clientTransactions[1].receiveResponse({
+			body: 'retry-answer',
+			getHeader: () => 'application/sdp',
+			hasHeader: () => true,
+			method: 'UPDATE',
+			status_code: 200,
+		});
+
+		await update;
 
 		expect(connection.signalingState).toBe('stable');
 		expect(dialog.uac_pending_reply).toBe(false);

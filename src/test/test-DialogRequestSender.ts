@@ -136,6 +136,36 @@ describe('DialogRequestSender 491 recovery', () => {
 		expect(sender.send).toHaveBeenCalledTimes(1);
 	});
 
+	test('retries an UPDATE with a fresh SDP offer after 491', async () => {
+		const onErrorResponse = jest.fn();
+		const onReattempt = jest.fn().mockResolvedValue('fresh-offer');
+		const dialog = {
+			_ua: {},
+			beginLocalOfferRetryWait: jest.fn(),
+			endLocalOfferRetryWait: jest.fn(),
+			isTerminated: jest.fn().mockReturnValue(false),
+			local_seqnum: 10,
+		};
+		const request = {
+			body: 'old-offer',
+			cseq: 10,
+			method: 'UPDATE',
+		};
+		const sender = new DialogRequestSender(dialog, request, {
+			onErrorResponse,
+			onReattempt,
+		});
+
+		sender.send = jest.fn();
+		sender._receiveResponse({ method: 'UPDATE', status_code: 491 });
+		await jest.advanceTimersByTimeAsync(1000);
+
+		expect(onErrorResponse).not.toHaveBeenCalled();
+		expect(onReattempt).toHaveBeenCalledTimes(1);
+		expect(request.body).toBe('fresh-offer');
+		expect(sender.send).toHaveBeenCalledTimes(1);
+	});
+
 	test('allows an incoming re-INVITE through Dialog while waiting to retry after 491', async () => {
 		const receiveRequest = jest.fn();
 		const dialog = createDialog(receiveRequest);

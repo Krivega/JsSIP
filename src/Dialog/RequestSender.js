@@ -87,13 +87,14 @@ module.exports = class DialogRequestSender {
 	}
 
 	_receiveResponse(response) {
+		const isOfferRequest =
+			this._request.method === JsSIP_C.INVITE ||
+			(this._request.method === JsSIP_C.UPDATE && this._request.body);
+
 		// RFC3261 12.2.1.2 408 or 481 is received for a request within a dialog.
 		if (response.status_code === 408 || response.status_code === 481) {
 			this._eventHandlers.onDialogError(response);
-		} else if (
-			response.method === JsSIP_C.INVITE &&
-			response.status_code === 491
-		) {
+		} else if (isOfferRequest && response.status_code === 491) {
 			if (this._reattempt) {
 				this._eventHandlers.onErrorResponse(response);
 			} else {

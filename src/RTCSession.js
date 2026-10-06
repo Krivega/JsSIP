@@ -3281,15 +3281,21 @@ module.exports = class RTCSession extends EventEmitter {
 			dialog.beginLocalOffer();
 			extraHeaders.push('Content-Type: application/sdp');
 
-			return this._createQueuedLocalOffer(rtcOfferConstraints)
+			const createOffer = () =>
+				this._createQueuedLocalOffer(rtcOfferConstraints);
+
+			return createOffer()
 				.then(sdp => {
-					return this.sendRequestAsync(JsSIP_C.UPDATE, sdp, extraHeaders).then(
-						({ response, isError }) => {
-							if (!isError) {
-								return onSucceeded.call(this, response);
-							}
+					return this.sendRequestAsync(
+						JsSIP_C.UPDATE,
+						sdp,
+						extraHeaders,
+						createOffer
+					).then(({ response, isError }) => {
+						if (!isError) {
+							return onSucceeded.call(this, response);
 						}
-					);
+					});
 				})
 				.catch(error => {
 					onFailed.call(this, error);
