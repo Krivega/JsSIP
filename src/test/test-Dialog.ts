@@ -2,6 +2,8 @@ import './include/common';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const Dialog = require('../Dialog.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const URI = require('../URI.js');
 
 type TInDialogRequest = {
 	body?: string;
@@ -16,8 +18,15 @@ type TInDialogRequest = {
 
 type TInDialogRequestFixture = {
 	dialog: {
+		_createRequest: (
+			method: string,
+			extraHeaders: string[],
+			body: null
+		) => { cseq: number; getHeader: (name: string) => string | undefined };
 		beginLocalOffer: () => void;
+		incrementLocalSequenceNumber: (method: string) => number;
 		isTerminated: () => boolean;
+		local_seqnum: number;
 		receiveRequest: (request: TInDialogRequest) => void;
 		terminate: () => void;
 		uac_pending_reply: boolean;
@@ -46,6 +55,11 @@ const createInDialogRequestFixture = ({
 	};
 	const owner = {
 		_ua: {
+			configuration: {
+				display_name: null,
+				extra_headers: [],
+				use_preloaded_route: false,
+			},
 			destroyDialog: jest.fn(),
 			newDialog: jest.fn(),
 		},
@@ -58,7 +72,7 @@ const createInDialogRequestFixture = ({
 		getHeaders: jest.fn().mockReturnValue([]),
 		hasHeader: jest.fn().mockReturnValue(true),
 		parseHeader: jest.fn((header: string) => ({
-			uri: `sip:${header}@example.com`,
+			uri: URI.parse(`sip:${header}@example.com`),
 		})),
 		to_tag: 'local-tag',
 	};
@@ -72,6 +86,32 @@ const createInDialogRequestFixture = ({
 
 	return { dialog, receiveRequest, request };
 };
+
+describe('Dialog retry sequence numbers', () => {
+	test('uses the retried re-INVITE CSeq for ACK', () => {
+		const { dialog } = createInDialogRequestFixture();
+
+		dialog.local_seqnum = 11;
+		dialog.incrementLocalSequenceNumber('INVITE');
+
+		const ack = dialog._createRequest('ACK', [], null);
+
+		expect(ack.cseq).toBe(12);
+		expect(ack.getHeader('cseq')).toBe('12 ACK');
+	});
+
+	test('uses the retried re-INVITE CSeq for CANCEL', () => {
+		const { dialog } = createInDialogRequestFixture();
+
+		dialog.local_seqnum = 11;
+		dialog.incrementLocalSequenceNumber('INVITE');
+
+		const cancel = dialog._createRequest('CANCEL', [], null);
+
+		expect(cancel.cseq).toBe(12);
+		expect(cancel.getHeader('cseq')).toBe('12 CANCEL');
+	});
+});
 
 describe('Dialog re-INVITE collision handling', () => {
 	test('reports its terminated state after termination', () => {

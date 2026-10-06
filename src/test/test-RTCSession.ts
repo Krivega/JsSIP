@@ -81,7 +81,10 @@ const createDeferred = <T>(): TDeferred<T> => {
 };
 
 type TClientTransaction = {
-	request: { body: string };
+	request: {
+		body: string;
+		toString: () => string;
+	};
 	receiveResponse: (response: object) => void;
 };
 
@@ -733,6 +736,9 @@ describe('RTCSession local offer recovery after 491', () => {
 		expect(clientTransactions).toHaveLength(2);
 		expect(createLocalDescription).toHaveBeenCalledTimes(3);
 		expect(clientTransactions[1].request.body).toBe('local-offer-2');
+		expect(clientTransactions[1].request.toString()).toContain(
+			'CSeq: 12 UPDATE\r\n'
+		);
 		expect(connection.signalingState).toBe('have-local-offer');
 		expect(dialog.uac_pending_reply).toBe(true);
 

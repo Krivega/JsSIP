@@ -101,7 +101,6 @@ module.exports = class DialogRequestSender {
 			} else {
 				// Both peers may receive 491. Yield during the backoff so either retry can win.
 				this._dialog.beginLocalOfferRetryWait();
-				this._request.cseq = this._dialog.local_seqnum += 1;
 				this._reattemptTimer = setTimeout(() => {
 					this._reattemptRequest();
 				}, 1000);
@@ -135,6 +134,18 @@ module.exports = class DialogRequestSender {
 				if (body !== undefined) {
 					this._request.body = body;
 				}
+
+				// Allocate CSeq only when the retry is ready, after any intervening
+				// in-dialog requests have consumed their sequence numbers.
+				this._request.cseq = this._dialog.incrementLocalSequenceNumber(
+					this._request.method
+				);
+
+				// Keep the serialized header in sync with the request property.
+				this._request.setHeader(
+					'cseq',
+					`${this._request.cseq} ${this._request.method}`
+				);
 
 				// Mark and send the single retry allowed after the initial 491 response.
 				this._reattempt = true;

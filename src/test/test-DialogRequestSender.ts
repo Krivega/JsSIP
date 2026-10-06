@@ -4,6 +4,8 @@ import './include/common';
 const DialogRequestSender = require('../Dialog/RequestSender.js');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const Dialog = require('../Dialog.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const URI = require('../URI.js');
 
 type TIncomingReinvite = {
 	body: string;
@@ -18,11 +20,24 @@ type TIncomingReinvite = {
 
 type TDialog = {
 	_ua: object;
+	_createRequest: (
+		method: string,
+		extraHeaders: string[],
+		body: string | null
+	) => {
+		body: string | null;
+		cseq: number;
+		getHeader: (name: string) => string | undefined;
+		method: string;
+		setHeader: (name: string, value: string) => void;
+		toString: () => string;
+	};
 	beginLocalOffer: () => void;
 	beginLocalOfferRetryWait: () => void;
 	endLocalOffer: () => void;
 	endLocalOfferRetryWait: () => void;
 	hasPendingLocalOffer: () => boolean;
+	incrementLocalSequenceNumber: (method: string) => number;
 	isTerminated: () => boolean;
 	local_seqnum: number;
 	receiveRequest: (request: TIncomingReinvite) => void;
@@ -33,6 +48,7 @@ type TOfferRequest = {
 	body: string;
 	cseq: number;
 	method: string;
+	setHeader: jest.Mock;
 };
 
 type TDialogRequestSender = {
@@ -43,6 +59,13 @@ type TDialogRequestSender = {
 const createDialog = (receiveRequest: jest.Mock): TDialog => {
 	const owner = {
 		_ua: {
+			configuration: {
+				display_name: null,
+				extra_headers: [],
+				session_timers: false,
+				uri: URI.parse('sip:local@example.com'),
+				use_preloaded_route: false,
+			},
 			destroyDialog: jest.fn(),
 			newDialog: jest.fn(),
 		},
@@ -55,7 +78,7 @@ const createDialog = (receiveRequest: jest.Mock): TDialog => {
 		getHeaders: jest.fn().mockReturnValue([]),
 		hasHeader: jest.fn().mockReturnValue(true),
 		parseHeader: jest.fn((header: string) => ({
-			uri: `sip:${header}@example.com`,
+			uri: URI.parse(`sip:${header}@example.com`),
 		})),
 		to_tag: 'local-tag',
 	};
@@ -101,12 +124,14 @@ describe('DialogRequestSender 491 recovery', () => {
 			_ua: {},
 			beginLocalOfferRetryWait: jest.fn(),
 			endLocalOfferRetryWait: jest.fn(),
+			incrementLocalSequenceNumber: jest.fn().mockReturnValue(11),
 			isTerminated: jest.fn().mockReturnValue(false),
 			local_seqnum: 10,
 		};
 		const request = {
 			cseq: 10,
 			method: 'INVITE',
+			setHeader: jest.fn(),
 		};
 		const sender = new DialogRequestSender(dialog, request, {
 			onErrorResponse,
@@ -116,11 +141,12 @@ describe('DialogRequestSender 491 recovery', () => {
 		sender._receiveResponse({ method: 'INVITE', status_code: 491 });
 
 		expect(onErrorResponse).not.toHaveBeenCalled();
-		expect(request.cseq).toBe(11);
+		expect(request.cseq).toBe(10);
 		expect(sender.send).not.toHaveBeenCalled();
 
 		await jest.advanceTimersByTimeAsync(1000);
 
+		expect(request.cseq).toBe(11);
 		expect(sender.send).toHaveBeenCalledTimes(1);
 	});
 
@@ -134,6 +160,7 @@ describe('DialogRequestSender 491 recovery', () => {
 			_ua: {},
 			beginLocalOfferRetryWait: jest.fn(),
 			endLocalOfferRetryWait: jest.fn(),
+			incrementLocalSequenceNumber: jest.fn().mockReturnValue(11),
 			isTerminated: jest.fn().mockReturnValue(false),
 			local_seqnum: 10,
 		};
@@ -141,6 +168,7 @@ describe('DialogRequestSender 491 recovery', () => {
 			body: 'old-offer',
 			cseq: 10,
 			method: 'INVITE',
+			setHeader: jest.fn(),
 		};
 		const sender = new DialogRequestSender(dialog, request, {
 			onReattempt,
@@ -168,6 +196,7 @@ describe('DialogRequestSender 491 recovery', () => {
 			_ua: {},
 			beginLocalOfferRetryWait: jest.fn(),
 			endLocalOfferRetryWait: jest.fn(),
+			incrementLocalSequenceNumber: jest.fn().mockReturnValue(11),
 			isTerminated: jest.fn().mockReturnValue(false),
 			local_seqnum: 10,
 		};
@@ -175,6 +204,7 @@ describe('DialogRequestSender 491 recovery', () => {
 			body: 'old-offer',
 			cseq: 10,
 			method: 'UPDATE',
+			setHeader: jest.fn(),
 		};
 		const sender = new DialogRequestSender(dialog, request, {
 			onErrorResponse,
@@ -188,6 +218,65 @@ describe('DialogRequestSender 491 recovery', () => {
 		expect(onErrorResponse).not.toHaveBeenCalled();
 		expect(onReattempt).toHaveBeenCalledTimes(1);
 		expect(request.body).toBe('fresh-offer');
+		expect(sender.send).toHaveBeenCalledTimes(1);
+	});
+
+	test('updates the dialog sequence number and UPDATE CSeq header before retrying', async () => {
+		const dialog = createDialog(jest.fn());
+
+		dialog.local_seqnum = 10;
+		const request = dialog._createRequest(
+			'UPDATE',
+			['Content-Type: application/sdp'],
+			'old-offer'
+		);
+		const sender = new DialogRequestSender(dialog, request, {});
+
+		dialog.beginLocalOffer();
+		sender.send = jest.fn();
+		sender._receiveResponse({ method: 'UPDATE', status_code: 491 });
+
+		expect(dialog.local_seqnum).toBe(11);
+		expect(request.cseq).toBe(11);
+
+		await jest.advanceTimersByTimeAsync(1000);
+
+		expect(dialog.local_seqnum).toBe(12);
+		expect(request.cseq).toBe(12);
+		expect(request.getHeader('cseq')).toBe('12 UPDATE');
+		expect(request.toString()).toContain('CSeq: 12 UPDATE\r\n');
+	});
+
+	test('uses the next CSeq when INFO is created before the UPDATE retry', async () => {
+		const dialog = createDialog(jest.fn());
+
+		dialog.local_seqnum = 10;
+		const update = dialog._createRequest(
+			'UPDATE',
+			['Content-Type: application/sdp'],
+			'old-offer'
+		);
+		const sender = new DialogRequestSender(dialog, update, {});
+
+		dialog.beginLocalOffer();
+		sender.send = jest.fn();
+		sender._receiveResponse({ method: 'UPDATE', status_code: 491 });
+
+		// Another in-dialog request consumes the next CSeq during the backoff.
+		const info = dialog._createRequest('INFO', [], null);
+
+		// INFO advances the dialog CSeq, while the pending UPDATE keeps its original value.
+		expect(dialog.local_seqnum).toBe(12);
+		expect(info.cseq).toBe(12);
+		expect(update.cseq).toBe(11);
+
+		await jest.advanceTimersByTimeAsync(1000);
+
+		// The retry advances CSeq again and uses a value greater than the INFO request.
+		expect(dialog.local_seqnum).toBe(13);
+		expect(update.cseq).toBe(13);
+		expect(update.getHeader('cseq')).toBe('13 UPDATE');
+		expect(update.toString()).toContain('CSeq: 13 UPDATE\r\n');
 		expect(sender.send).toHaveBeenCalledTimes(1);
 	});
 
@@ -218,6 +307,7 @@ describe('DialogRequestSender 491 recovery', () => {
 				body: 'old-offer',
 				cseq: 10,
 				method: 'INVITE',
+				setHeader: jest.fn(),
 			};
 			const sender = createDialogRequestSender(dialog, request, {
 				onErrorResponse,
@@ -247,6 +337,7 @@ describe('DialogRequestSender 491 recovery', () => {
 				body: 'old-offer',
 				cseq: 10,
 				method: 'UPDATE',
+				setHeader: jest.fn(),
 			};
 			const sender = createDialogRequestSender(dialog, request, {
 				onErrorResponse,
@@ -278,6 +369,7 @@ describe('DialogRequestSender 491 recovery', () => {
 		const outgoingRequest = {
 			cseq: 10,
 			method: 'INVITE',
+			setHeader: jest.fn(),
 		};
 		const sender = new DialogRequestSender(dialog, outgoingRequest, {});
 
@@ -316,6 +408,7 @@ describe('DialogRequestSender 491 recovery', () => {
 		const outgoingRequest = {
 			cseq: 10,
 			method: 'INVITE',
+			setHeader: jest.fn(),
 		};
 		const sender = new DialogRequestSender(dialog, outgoingRequest, {});
 
@@ -343,12 +436,14 @@ describe('DialogRequestSender 491 recovery', () => {
 			_ua: {},
 			beginLocalOfferRetryWait: jest.fn(),
 			endLocalOfferRetryWait: jest.fn(),
+			incrementLocalSequenceNumber: jest.fn().mockReturnValue(11),
 			isTerminated: jest.fn().mockReturnValue(false),
 			local_seqnum: 10,
 		};
 		const request = {
 			cseq: 10,
 			method: 'INVITE',
+			setHeader: jest.fn(),
 		};
 		const sender = new DialogRequestSender(dialog, request, {
 			onErrorResponse,

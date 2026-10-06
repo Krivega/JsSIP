@@ -104,6 +104,17 @@ module.exports = class Dialog {
 		this._local_seqnum = num;
 	}
 
+	incrementLocalSequenceNumber(method) {
+		this._local_seqnum += 1;
+
+		// ACK and CANCEL must use the CSeq of the re-INVITE being retried.
+		if (method === JsSIP_C.INVITE) {
+			this._outgoing_ack_seqnum = this._local_seqnum;
+		}
+
+		return this._local_seqnum;
+	}
+
 	get owner() {
 		return this._owner;
 	}
