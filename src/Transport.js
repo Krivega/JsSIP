@@ -128,6 +128,7 @@ module.exports = class Transport {
 			this.socket.onconnect = this._onConnect.bind(this);
 			this.socket.ondisconnect = this._onDisconnect.bind(this);
 			this.socket.ondata = this._onData.bind(this);
+			this.socket.onerror = this._onError.bind(this);
 
 			this.socket.connect();
 		}
@@ -292,6 +293,31 @@ module.exports = class Transport {
 		}
 
 		this._reconnect(error);
+	}
+
+	_onError(code, reason) {
+		this.status = C.STATUS_DISCONNECTED;
+		this.ondisconnect({
+			socket: this.socket,
+			error: true,
+			code,
+			reason,
+		});
+
+		if (this.close_requested) {
+			return;
+		}
+
+		// Update socket status.
+		else {
+			this.sockets.forEach(function (socket) {
+				if (this.socket === socket.socket) {
+					socket.status = C.SOCKET_STATUS_ERROR;
+				}
+			}, this);
+		}
+
+		this._reconnect();
 	}
 
 	_onData(data) {

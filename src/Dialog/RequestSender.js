@@ -10,6 +10,8 @@ const EventHandlers = {
 	onErrorResponse: () => {},
 	onAuthenticated: () => {},
 	onDialogError: () => {},
+	onReattempt: () => undefined,
+	onReattemptCanceled: () => {},
 };
 
 module.exports = class DialogRequestSender {
@@ -86,22 +88,21 @@ module.exports = class DialogRequestSender {
 	}
 
 	_receiveResponse(response) {
+		const isOfferRequest =
+			this._request.method === JsSIP_C.INVITE ||
+			(this._request.method === JsSIP_C.UPDATE && this._request.body);
+
 		// RFC3261 12.2.1.2 408 or 481 is received for a request within a dialog.
 		if (response.status_code === 408 || response.status_code === 481) {
 			this._eventHandlers.onDialogError(response);
-		} else if (
-			response.method === JsSIP_C.INVITE &&
-			response.status_code === 491
-		) {
+		} else if (isOfferRequest && response.status_code === 491) {
 			if (this._reattempt) {
 				this._eventHandlers.onErrorResponse(response);
 			} else {
-				this._request.cseq = this._dialog.local_seqnum += 1;
+				// Both peers may receive 491. Yield during the backoff so either retry can win.
+				this._dialog.beginLocalOfferRetryWait();
 				this._reattemptTimer = setTimeout(() => {
-					if (!this._dialog.isTerminated()) {
-						this._reattempt = true;
-						this.send();
-					}
+					this._reattemptRequest();
 				}, 1000);
 			}
 		} else if (response.status_code >= 200 && response.status_code < 300) {
@@ -109,5 +110,65 @@ module.exports = class DialogRequestSender {
 		} else if (response.status_code >= 300) {
 			this._eventHandlers.onErrorResponse(response);
 		}
+	}
+
+	// Retry a request after a 491 backoff, rebuilding its body when required.
+	_reattemptRequest() {
+		// Do not restart a request after its dialog has already ended.
+		if (this._cancelReattemptIfDialogTerminated()) {
+			return;
+		}
+
+		// Restore the collision guard while the new local offer is being prepared.
+		this._dialog.endLocalOfferRetryWait();
+
+		// Let the session asynchronously prepare a body valid for its current state.
+		Promise.resolve()
+			.then(() => this._eventHandlers.onReattempt())
+			.then(body => {
+				// The dialog may have ended while the new body was being prepared.
+				if (this._cancelReattemptIfDialogTerminated()) {
+					return;
+				}
+
+				if (body !== undefined) {
+					this._request.body = body;
+				}
+
+				// Allocate CSeq only when the retry is ready, after any intervening
+				// in-dialog requests have consumed their sequence numbers.
+				this._request.cseq = this._dialog.incrementLocalSequenceNumber(
+					this._request.method
+				);
+
+				// Keep the serialized header in sync with the request property.
+				this._request.setHeader(
+					'cseq',
+					`${this._request.cseq} ${this._request.method}`
+				);
+
+				// Mark and send the single retry allowed after the initial 491 response.
+				this._reattempt = true;
+				this.send();
+			})
+			.catch(error => {
+				// Ignore a late preparation error after the dialog has ended.
+				if (this._cancelReattemptIfDialogTerminated()) {
+					return;
+				}
+
+				this._eventHandlers.onErrorResponse(error);
+			});
+	}
+
+	// Cancel the pending retry once its dialog can no longer send requests.
+	_cancelReattemptIfDialogTerminated() {
+		if (!this._dialog.isTerminated()) {
+			return false;
+		}
+
+		this._eventHandlers.onReattemptCanceled();
+
+		return true;
 	}
 };

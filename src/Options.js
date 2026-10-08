@@ -79,6 +79,7 @@ module.exports = class Options extends EventEmitter {
 		}
 
 		const request_sender = new RequestSender(this._ua, this._request, {
+			requestTimeout: options.timeout,
 			onRequestTimeout: () => {
 				this._onRequestTimeout();
 			},

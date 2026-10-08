@@ -14,6 +14,12 @@ const C = {
 	STATUS_TERMINATED: 3,
 };
 
+const LocalOfferState = {
+	IDLE: 'idle',
+	ACTIVE: 'active',
+	WAITING_FOR_RETRY: 'waiting-for-retry',
+};
+
 // RFC 3261 12.1.
 module.exports = class Dialog {
 	// Expose C object.
@@ -27,6 +33,7 @@ module.exports = class Dialog {
 
 		this._uac_pending_reply = false;
 		this._uas_pending_reply = false;
+		this._local_offer_state = LocalOfferState.IDLE;
 
 		if (!message.hasHeader('contact')) {
 			return {
@@ -97,6 +104,17 @@ module.exports = class Dialog {
 		this._local_seqnum = num;
 	}
 
+	incrementLocalSequenceNumber(method) {
+		this._local_seqnum += 1;
+
+		// ACK and CANCEL must use the CSeq of the re-INVITE being retried.
+		if (method === JsSIP_C.INVITE) {
+			this._outgoing_ack_seqnum = this._local_seqnum;
+		}
+
+		return this._local_seqnum;
+	}
+
 	get owner() {
 		return this._owner;
 	}
@@ -113,8 +131,40 @@ module.exports = class Dialog {
 		return this._uas_pending_reply;
 	}
 
+	hasPendingLocalOffer() {
+		return this._local_offer_state !== LocalOfferState.IDLE;
+	}
+
+	beginLocalOffer() {
+		this._local_offer_state = LocalOfferState.ACTIVE;
+	}
+
+	beginLocalOfferRetryWait() {
+		// Prevent another local offer, but let the peer's retry resolve the glare.
+		if (this._local_offer_state === LocalOfferState.ACTIVE) {
+			this._local_offer_state = LocalOfferState.WAITING_FOR_RETRY;
+		}
+	}
+
+	endLocalOfferRetryWait() {
+		// Restore the collision guard immediately before the local retry is sent.
+		if (this._local_offer_state === LocalOfferState.WAITING_FOR_RETRY) {
+			this._local_offer_state = LocalOfferState.ACTIVE;
+		}
+	}
+
+	endLocalOffer() {
+		this._local_offer_state = LocalOfferState.IDLE;
+	}
+
+	isLocalOfferBlockingRemoteOffer() {
+		// A pending local operation must not reject the peer during the 491 backoff.
+		return this._local_offer_state === LocalOfferState.ACTIVE;
+	}
+
 	isTerminated() {
-		return this._status === C.STATUS_TERMINATED;
+		// Dialog lifecycle is stored in _state; _status belongs to RTCSession.
+		return this._state === C.STATUS_TERMINATED;
 	}
 
 	update(message, type) {
@@ -253,8 +303,14 @@ module.exports = class Dialog {
 			request.method === JsSIP_C.INVITE ||
 			(request.method === JsSIP_C.UPDATE && request.body)
 		) {
-			if (this._uac_pending_reply === true) {
+			if (
+				this._uac_pending_reply === true ||
+				this.isLocalOfferBlockingRemoteOffer()
+			) {
+				// Do not pass an offer rejected with a final response to the dialog owner.
 				request.reply(491);
+
+				return false;
 			} else if (this._uas_pending_reply === true) {
 				const retryAfter = ((Math.random() * 10) | 0) + 1;
 

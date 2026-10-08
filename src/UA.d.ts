@@ -19,6 +19,7 @@ import { Notifier } from './Notifier';
 import { Subscriber } from './Subscriber';
 import { URI } from './URI';
 import { causes } from './Constants';
+import { Options, SendOptionsOptions } from './Options';
 
 export interface UnRegisterOptions {
 	all?: boolean;
@@ -31,10 +32,9 @@ export interface CallOptions extends AnswerOptions {
 	fromDisplayName?: string;
 }
 
-export interface UAConfiguration {
+export interface UAConfigurationCore {
 	// mandatory parameters
-	sockets: Socket | Socket[] | WeightedSocket[];
-	uri: string;
+	sockets: Socket | (Socket | WeightedSocket)[];
 	// optional parameters
 	authorization_jwt?: string;
 	authorization_user?: string;
@@ -59,14 +59,23 @@ export interface UAConfiguration {
 	extra_headers?: string[];
 }
 
+export interface UAConfigurationParams extends UAConfigurationCore {
+	// mandatory parameters
+	uri: string;
+}
+
+export interface UAConfiguration extends UAConfigurationCore {
+	uri: URI;
+}
+
 export interface IncomingRTCSessionEvent {
-	originator: Originator.REMOTE;
+	originator: `${Originator.REMOTE}`;
 	session: RTCSession;
 	request: IncomingRequest;
 }
 
 export interface OutgoingRTCSessionEvent {
-	originator: Originator.LOCAL;
+	originator: `${Originator.LOCAL}`;
 	session: RTCSession;
 	request: OutgoingRequest;
 }
@@ -94,29 +103,34 @@ export interface RegisteredEvent {
 }
 
 export interface UnRegisteredEvent {
-	response: IncomingResponse;
-	cause?: causes;
+	response?: IncomingResponse | null;
+	cause?: `${causes}`;
+}
+
+export interface RegistrationFailedEvent {
+	response: IncomingResponse | null;
+	cause: `${causes}`;
 }
 
 export interface IncomingMessageEvent {
-	originator: Originator.REMOTE;
+	originator: `${Originator.REMOTE}`;
 	message: Message;
 	request: IncomingRequest;
 }
 
 export interface OutgoingMessageEvent {
-	originator: Originator.LOCAL;
+	originator: `${Originator.LOCAL}`;
 	message: Message;
 	request: OutgoingRequest;
 }
 
 export interface IncomingOptionsEvent {
-	originator: Originator.REMOTE;
+	originator: `${Originator.REMOTE}`;
 	request: IncomingRequest;
 }
 
 export interface OutgoingOptionsEvent {
-	originator: Originator.LOCAL;
+	originator: `${Originator.LOCAL}`;
 	request: OutgoingRequest;
 }
 
@@ -125,7 +139,9 @@ export type ConnectedListener = (event: ConnectedEvent) => void;
 export type DisconnectedListener = (event: DisconnectEvent) => void;
 export type RegisteredListener = (event: RegisteredEvent) => void;
 export type UnRegisteredListener = (event: UnRegisteredEvent) => void;
-export type RegistrationFailedListener = UnRegisteredListener;
+export type RegistrationFailedListener = (
+	event: RegistrationFailedEvent
+) => void;
 export type RegistrationExpiringListener = () => void;
 export type IncomingRTCSessionListener = (
 	event: IncomingRTCSessionEvent
@@ -176,7 +192,7 @@ export interface UAContactOptions {
 export interface UAContact {
 	pub_gruu?: string;
 	temp_gruu?: string;
-	uri?: string;
+	uri?: URI;
 
 	toString(options?: UAContactOptions): string;
 }
@@ -213,6 +229,10 @@ export interface NotifierOptions {
 	pending?: boolean;
 }
 
+export interface UASendOptionsOptions extends SendOptionsOptions {
+	timeout?: number;
+}
+
 declare enum UAStatus {
 	// UA status codes.
 	STATUS_INIT = 0,
@@ -229,7 +249,9 @@ declare enum UAStatus {
 export class UA extends EventEmitter {
 	static get C(): typeof UAStatus;
 
-	constructor(configuration: UAConfiguration);
+	configuration: UAConfiguration;
+
+	constructor(configuration: UAConfigurationParams);
 
 	get C(): typeof UAStatus;
 
@@ -255,17 +277,23 @@ export class UA extends EventEmitter {
 		options?: SendMessageOptions
 	): Message;
 
+	sendOptions(
+		target: string | URI,
+		body?: string,
+		options?: UASendOptionsOptions
+	): Options;
+
 	subscribe(
 		target: string,
 		eventName: string,
 		accept: string,
-		options?: SubscriberOptions
+		options: SubscriberOptions
 	): Subscriber;
 
 	notify(
 		subscribe: IncomingRequest,
 		contentType: string,
-		options?: NotifierOptions
+		options: NotifierOptions
 	): Notifier;
 
 	terminateSessions(options?: TerminateOptions): void;
@@ -276,9 +304,9 @@ export class UA extends EventEmitter {
 
 	get<T extends keyof UAConfiguration>(parameter: T): UAConfiguration[T];
 
-	set<T extends keyof UAConfiguration>(
+	set<T extends keyof UAConfigurationParams>(
 		parameter: T,
-		value: UAConfiguration[T]
+		value: UAConfigurationParams[T]
 	): boolean;
 
 	on<T extends keyof UAEventMap>(type: T, listener: UAEventMap[T]): this;

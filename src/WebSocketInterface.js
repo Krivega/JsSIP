@@ -140,5 +140,6 @@ module.exports = class WebSocketInterface {
 
 	_onError(e) {
 		logger.warn(`WebSocket ${this._url} error: `, e);
+		this.onerror(e.code, e.message);
 	}
 };

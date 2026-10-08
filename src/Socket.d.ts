@@ -25,5 +25,7 @@ export class Socket {
 
 	ondisconnect(error: boolean, code?: number, reason?: string): void;
 
+	onerror(code?: number, reason?: string): void;
+
 	ondata<T>(event: T): void;
 }
