@@ -86,6 +86,20 @@ const applySenderParams = ({
 	return setEncodingsToSender({ sender, sendEncodings, degradationPreference });
 };
 
+// Create operation-scoped cleanup so an older request cannot end a newer offer.
+const createLocalOfferEndHandler = dialog => {
+	let isEnded = false;
+
+	return () => {
+		if (isEnded) {
+			return;
+		}
+
+		isEnded = true;
+		dialog.endLocalOffer();
+	};
+};
+
 const IS_SUPPORT_ADD_TRANSCEIVER = !isFirefoxOrLower(109);
 
 const addTrackTransceiver = (
@@ -1309,6 +1323,21 @@ module.exports = class RTCSession extends EventEmitter {
 	}
 
 	/**
+	 * Terminate an active session after a local media renegotiation failure.
+	 */
+	_terminateOnMediaRenegotiationFailure(reasonPhrase) {
+		if (this._status === C.STATUS_TERMINATED) {
+			return;
+		}
+
+		this.terminate({
+			cause: JsSIP_C.causes.WEBRTC_ERROR,
+			status_code: 500,
+			reason_phrase: reasonPhrase,
+		});
+	}
+
+	/**
 	 * Hold
 	 */
 	hold(options = {}, done) {
@@ -1339,11 +1368,7 @@ module.exports = class RTCSession extends EventEmitter {
 				}
 			},
 			failed: () => {
-				this.terminate({
-					cause: JsSIP_C.causes.WEBRTC_ERROR,
-					status_code: 500,
-					reason_phrase: 'Hold Failed',
-				});
+				this._terminateOnMediaRenegotiationFailure('Hold Failed');
 			},
 		};
 
@@ -1391,11 +1416,7 @@ module.exports = class RTCSession extends EventEmitter {
 				}
 			},
 			failed: () => {
-				this.terminate({
-					cause: JsSIP_C.causes.WEBRTC_ERROR,
-					status_code: 500,
-					reason_phrase: 'Unhold Failed',
-				});
+				this._terminateOnMediaRenegotiationFailure('Unhold Failed');
 			},
 		};
 
@@ -1444,11 +1465,10 @@ module.exports = class RTCSession extends EventEmitter {
 					resolve(true);
 				},
 				failed: () => {
-					this.terminate({
-						cause: JsSIP_C.causes.WEBRTC_ERROR,
-						status_code: 500,
-						reason_phrase: 'Media Renegotiation Failed',
-					});
+					this._terminateOnMediaRenegotiationFailure(
+						'Media Renegotiation Failed'
+					);
+
 					if (fail) {
 						fail();
 					}
@@ -1630,7 +1650,7 @@ module.exports = class RTCSession extends EventEmitter {
 	/**
 	 * Send a generic in-dialog Request
 	 */
-	sendRequestAsync(method, sdp, extraHeaders) {
+	sendRequestAsync(method, sdp, extraHeaders, onReattempt) {
 		logger.debug('sendRequestAsync()');
 
 		return new Promise((resolve, reject) => {
@@ -1638,6 +1658,10 @@ module.exports = class RTCSession extends EventEmitter {
 				extraHeaders,
 				body: sdp,
 				eventHandlers: {
+					onReattempt,
+					onReattemptCanceled: () => {
+						reject(new Error('Request reattempt canceled'));
+					},
 					onSuccessResponse: response => {
 						resolve({ response, isError: false });
 					},
@@ -1899,6 +1923,12 @@ module.exports = class RTCSession extends EventEmitter {
 		// No established yet.
 		if (!this._dialog) {
 			logger.debug('isReadyToReOffer() | session not established yet');
+
+			return false;
+		}
+
+		if (this._dialog.hasPendingLocalOffer()) {
+			logger.debug('isReadyToReOffer() | local SDP offer is pending');
 
 			return false;
 		}
@@ -3084,10 +3114,43 @@ module.exports = class RTCSession extends EventEmitter {
 	}
 
 	/**
+	 * Create a local offer after the queued WebRTC operations have completed.
+	 */
+	_createQueuedLocalOffer(rtcOfferConstraints) {
+		// A competing remote offer may roll back the previous local description.
+		const promiseCreateOffer = this._connectionPromiseQueue.then(() => {
+			// Do not access a PeerConnection closed while this operation was queued.
+			if (this._status === C.STATUS_TERMINATED) {
+				throw new Error('Session terminated');
+			}
+
+			return this._createLocalDescription('offer', rtcOfferConstraints);
+		});
+
+		this._connectionPromiseQueue = promiseCreateOffer.catch(() => undefined);
+
+		return promiseCreateOffer.then(sdp => {
+			sdp = this._mangleOffer(sdp);
+
+			const e = { originator: 'local', type: 'offer', sdp };
+
+			logger.debug('emit "sdp"');
+			this.emit('sdp', e);
+
+			return sdp;
+		});
+	}
+
+	/**
 	 * Send Re-INVITE
 	 */
 	_sendReinvite(options = {}) {
 		logger.debug('sendReinvite()');
+
+		const dialog = this._dialog;
+
+		// Cover local offer creation before the outgoing SIP transaction exists.
+		dialog.beginLocalOffer();
 
 		const extraHeaders = Utils.cloneArray(options.extraHeaders);
 		const eventHandlers = Utils.cloneObject(options.eventHandlers);
@@ -3095,6 +3158,7 @@ module.exports = class RTCSession extends EventEmitter {
 			options.rtcOfferConstraints || this._rtcOfferConstraints || null;
 
 		let succeeded = false;
+		const endLocalOffer = createLocalOfferEndHandler(dialog);
 
 		extraHeaders.push(`Contact: ${this._contact}`);
 		extraHeaders.push('Content-Type: application/sdp');
@@ -3106,31 +3170,26 @@ module.exports = class RTCSession extends EventEmitter {
 			);
 		}
 
-		const promiseCreateOffer = this._connectionPromiseQueue.then(() =>
-			this._createLocalDescription('offer', rtcOfferConstraints)
-		);
+		const createOffer = () => this._createQueuedLocalOffer(rtcOfferConstraints);
 
-		this._connectionPromiseQueue = promiseCreateOffer.catch(() => undefined);
-
-		return promiseCreateOffer
+		return createOffer()
 			.then(sdp => {
-				sdp = this._mangleOffer(sdp);
-
-				const e = { originator: 'local', type: 'offer', sdp };
-
-				logger.debug('emit "sdp"');
-				this.emit('sdp', e);
-
-				return this.sendRequestAsync(JsSIP_C.INVITE, sdp, extraHeaders).then(
-					({ response, isError }) => {
-						if (!isError) {
-							return onSucceeded.call(this, response);
-						}
+				return this.sendRequestAsync(
+					JsSIP_C.INVITE,
+					sdp,
+					extraHeaders,
+					createOffer
+				).then(({ response, isError }) => {
+					if (!isError) {
+						return onSucceeded.call(this, response);
 					}
-				);
+				});
 			})
 			.catch(error => {
 				onFailed(error);
+			})
+			.finally(() => {
+				endLocalOffer();
 			});
 
 		async function onSucceeded(response) {
@@ -3180,6 +3239,9 @@ module.exports = class RTCSession extends EventEmitter {
 
 			return promiseSetAnswer
 				.then(() => {
+					// Make the session ready before notifying the caller about success.
+					endLocalOffer();
+
 					if (eventHandlers.succeeded) {
 						eventHandlers.succeeded(response);
 					}
@@ -3209,6 +3271,7 @@ module.exports = class RTCSession extends EventEmitter {
 	_sendUpdate(options = {}) {
 		logger.debug('sendUpdate()');
 
+		const dialog = this._dialog;
 		const extraHeaders = Utils.cloneArray(options.extraHeaders);
 		const eventHandlers = Utils.cloneObject(options.eventHandlers);
 		const rtcOfferConstraints =
@@ -3216,6 +3279,7 @@ module.exports = class RTCSession extends EventEmitter {
 		const sdpOffer = options.sdpOffer || false;
 
 		let succeeded = false;
+		const endLocalOffer = createLocalOfferEndHandler(dialog);
 
 		extraHeaders.push(`Contact: ${this._contact}`);
 
@@ -3227,32 +3291,31 @@ module.exports = class RTCSession extends EventEmitter {
 		}
 
 		if (sdpOffer) {
+			// Cover local offer creation before the outgoing SIP transaction exists.
+			dialog.beginLocalOffer();
 			extraHeaders.push('Content-Type: application/sdp');
 
-			const promiseCreateOffer = (this._connectionPromiseQueue =
-				this._connectionPromiseQueue.then(() =>
-					this._createLocalDescription('offer', rtcOfferConstraints)
-				));
+			const createOffer = () =>
+				this._createQueuedLocalOffer(rtcOfferConstraints);
 
-			return promiseCreateOffer
+			return createOffer()
 				.then(sdp => {
-					sdp = this._mangleOffer(sdp);
-
-					const e = { originator: 'local', type: 'offer', sdp };
-
-					logger.debug('emit "sdp"');
-					this.emit('sdp', e);
-
-					return this.sendRequestAsync(JsSIP_C.UPDATE, sdp, extraHeaders).then(
-						({ response, isError }) => {
-							if (!isError) {
-								return onSucceeded.call(this, response);
-							}
+					return this.sendRequestAsync(
+						JsSIP_C.UPDATE,
+						sdp,
+						extraHeaders,
+						createOffer
+					).then(({ response, isError }) => {
+						if (!isError) {
+							return onSucceeded.call(this, response);
 						}
-					);
+					});
 				})
 				.catch(error => {
 					onFailed.call(this, error);
+				})
+				.finally(() => {
+					endLocalOffer();
 				});
 		}
 
@@ -3311,6 +3374,9 @@ module.exports = class RTCSession extends EventEmitter {
 				return (this._connectionPromiseQueue = this._connectionPromiseQueue
 					.then(() => this._connection.setRemoteDescription(answer))
 					.then(() => {
+						// Make the session ready before notifying the caller about success.
+						endLocalOffer();
+
 						if (eventHandlers.succeeded) {
 							eventHandlers.succeeded(response);
 						}
