@@ -1495,7 +1495,7 @@ module.exports = class RTCSession extends EventEmitter {
 				}
 			};
 
-			if (this.isReadyToReOffer()) {
+			if (this._canSendReOffer()) {
 				sendOffer();
 
 				return true;
@@ -1756,6 +1756,9 @@ module.exports = class RTCSession extends EventEmitter {
 					clearTimeout(this._timers.ackTimer);
 					clearTimeout(this._timers.invite2xxTimer);
 
+					// The ACK closes the peer's INVITE exchange: waiting renegotiations may go.
+					this.resumeWaitingReOffers();
+
 					if (this._late_sdp) {
 						if (!request.body) {
 							this.terminate({
@@ -1990,18 +1993,22 @@ module.exports = class RTCSession extends EventEmitter {
 
 		// Re-check after the releasing transaction has finished its own state change.
 		Promise.resolve().then(() => {
-			while (
-				this._reOfferWaiters.length > 0 &&
-				(this._status === C.STATUS_WAITING_FOR_ACK ||
-					this._status === C.STATUS_CONFIRMED) &&
-				this.isReadyToReOffer()
-			) {
+			while (this._reOfferWaiters.length > 0 && this._canSendReOffer()) {
 				// A resumed renegotiation starts a local offer synchronously, so the loop
 				// usually stops after one step; it continues only if that renegotiation
 				// threw before taking the session, letting the next one go at once.
 				this._settleReOfferWaiter(this._reOfferWaiters[0], true);
 			}
 		});
+	}
+
+	/**
+	 * Check if a renegotiation can be sent right now.
+	 * Unlike isReadyToReOffer(), it also waits for the ACK of the peer's INVITE:
+	 * with a late SDP offer the ACK carries the answer, so the exchange is not over yet.
+	 */
+	_canSendReOffer() {
+		return this._status === C.STATUS_CONFIRMED && this.isReadyToReOffer();
 	}
 
 	/**

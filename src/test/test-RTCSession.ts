@@ -248,6 +248,7 @@ const createRtcSessionFixture = ({
 			RTCSession.prototype._terminateOnMediaRenegotiationFailure,
 		_waitForReadyToReOffer: RTCSession.prototype._waitForReadyToReOffer,
 		emit: jest.fn(),
+		_canSendReOffer: RTCSession.prototype._canSendReOffer,
 		isReadyToReOffer: RTCSession.prototype.isReadyToReOffer,
 		onDialogError: jest.fn(),
 		onRequestTimeout: jest.fn(),
@@ -369,6 +370,7 @@ describe('RTCSession local offer serialization', () => {
 				_setLocalMediaStatus: jest.fn(),
 				_status: 9,
 				emit: jest.fn(),
+				_canSendReOffer: RTCSession.prototype._canSendReOffer,
 				isReadyToReOffer: RTCSession.prototype.isReadyToReOffer,
 				sendRequest: jest.fn(),
 				sendRequestAsync,
@@ -949,7 +951,7 @@ describe('RTCSession renegotiation waiting for a ready session', () => {
 		jest.useRealTimers();
 	});
 
-	test('should send the renegotiation when the incoming re-INVITE is answered', async () => {
+	test('should send the renegotiation when the incoming re-INVITE is acknowledged', async () => {
 		const answerReady = createDeferred<void>();
 
 		// Keep the peer's offer/answer exchange in progress until the test releases it.
@@ -974,7 +976,15 @@ describe('RTCSession renegotiation waiting for a ready session', () => {
 		answerReady.resolve(undefined);
 		await jest.advanceTimersByTimeAsync(0);
 
+		// Answered, but the peer has not acknowledged the answer yet.
 		expect(dialog.uas_pending_reply).toBe(false);
+		expect(session._status).toBe(6);
+		expect(clientTransactions).toHaveLength(0);
+
+		dialog.receiveRequest({ cseq: 2, method: 'ACK' });
+		await jest.advanceTimersByTimeAsync(0);
+
+		expect(session._status).toBe(9);
 		expect(clientTransactions).toHaveLength(1);
 		expect(clientTransactions[0].request.body).toBe('local-offer-1');
 
