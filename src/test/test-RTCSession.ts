@@ -17,6 +17,7 @@ type TDialogFixture = {
 	local_seqnum: number;
 	owner: {
 		receiveRequest: jest.Mock;
+		resumeWaitingReOffers?: () => void;
 	};
 	receiveRequest: (request: object) => void;
 	terminate: () => void;
@@ -225,6 +226,7 @@ const createRtcSessionFixture = ({
 		_receiveReinvite: RTCSession.prototype._receiveReinvite,
 		_receiveUpdate: RTCSession.prototype._receiveUpdate,
 		_remoteHold: false,
+		_reOfferWaiters: [],
 		_rtcAnswerConstraints: null,
 		_rtcOfferConstraints: null,
 		_rtcReady: true,
@@ -235,6 +237,7 @@ const createRtcSessionFixture = ({
 			currentExpires: 90,
 			refresher: true,
 		},
+		_settleReOfferWaiter: RTCSession.prototype._settleReOfferWaiter,
 		_status: 9,
 		_timers: {},
 		_confirmed: jest.fn(),
@@ -243,11 +246,13 @@ const createRtcSessionFixture = ({
 		_setLocalMediaStatus: jest.fn(),
 		_terminateOnMediaRenegotiationFailure:
 			RTCSession.prototype._terminateOnMediaRenegotiationFailure,
+		_waitForReadyToReOffer: RTCSession.prototype._waitForReadyToReOffer,
 		emit: jest.fn(),
 		isReadyToReOffer: RTCSession.prototype.isReadyToReOffer,
 		onDialogError: jest.fn(),
 		onRequestTimeout: jest.fn(),
 		onTransportError: jest.fn(),
+		resumeWaitingReOffers: RTCSession.prototype.resumeWaitingReOffers,
 		sendRequest: RTCSession.prototype.sendRequest,
 		sendRequestAsync: RTCSession.prototype.sendRequestAsync,
 		terminate: jest.fn(),
@@ -256,6 +261,10 @@ const createRtcSessionFixture = ({
 	dialog.owner.receiveRequest.mockImplementation(request => {
 		RTCSession.prototype.receiveRequest.call(session, request);
 	});
+	// Let the real Dialog wake renegotiations waiting in the session.
+	dialog.owner.resumeWaitingReOffers = () => {
+		RTCSession.prototype.resumeWaitingReOffers.call(session);
+	};
 
 	return { failed, session, succeeded };
 };
@@ -901,5 +910,145 @@ describe('RTCSession _sendUpdate local offer state', () => {
 		await update;
 
 		expect(dialog.endLocalOffer).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('RTCSession renegotiation waiting for a ready session', () => {
+	const defaultTimeout = 5000;
+
+	let clientTransactions: TClientTransaction[];
+	let connection: TPeerConnectionFixture['connection'];
+	let createLocalDescription: jest.Mock;
+	let dialog: TDialogFixture;
+	let session: TRtcSessionFixture['session'];
+
+	const answerLocalOffer = (transaction: TClientTransaction): void => {
+		transaction.receiveResponse({
+			body: 'remote-answer',
+			getHeader: () => 'application/sdp',
+			hasHeader: () => true,
+			method: 'INVITE',
+			status_code: 200,
+		});
+	};
+
+	beforeEach(() => {
+		jest.useFakeTimers();
+
+		({ connection, createLocalDescription } = createPeerConnectionFixture());
+		dialog = createDialogFixture();
+		clientTransactions = createClientTransactionsFixture(dialog);
+		({ session } = createRtcSessionFixture({
+			connection,
+			createLocalDescription,
+			dialog,
+		}));
+	});
+
+	afterEach(() => {
+		jest.useRealTimers();
+	});
+
+	test('should send the renegotiation when the incoming re-INVITE is answered', async () => {
+		const answerReady = createDeferred<void>();
+
+		// Keep the peer's offer/answer exchange in progress until the test releases it.
+		createLocalDescription.mockImplementationOnce(async () => {
+			await answerReady.promise;
+			connection.signalingState = 'stable';
+
+			return 'peer-answer';
+		});
+
+		dialog.receiveRequest(
+			createCompetingOffer('INVITE', Transactions.C.STATUS_ACCEPTED)
+		);
+
+		const renegotiation = RTCSession.prototype.renegotiate.call(session);
+
+		await jest.advanceTimersByTimeAsync(0);
+
+		expect(dialog.uas_pending_reply).toBe(true);
+		expect(clientTransactions).toHaveLength(0);
+
+		answerReady.resolve(undefined);
+		await jest.advanceTimersByTimeAsync(0);
+
+		expect(dialog.uas_pending_reply).toBe(false);
+		expect(clientTransactions).toHaveLength(1);
+		expect(clientTransactions[0].request.body).toBe('local-offer-1');
+
+		answerLocalOffer(clientTransactions[0]);
+
+		await expect(renegotiation).resolves.toBe(true);
+	});
+
+	test('should send waiting renegotiations one after another', async () => {
+		dialog.uac_pending_reply = true;
+
+		const first = RTCSession.prototype.renegotiate.call(session);
+		const second = RTCSession.prototype.renegotiate.call(session);
+
+		dialog.uac_pending_reply = false;
+		await jest.advanceTimersByTimeAsync(0);
+
+		expect(clientTransactions).toHaveLength(1);
+
+		answerLocalOffer(clientTransactions[0]);
+
+		await expect(first).resolves.toBe(true);
+		await jest.advanceTimersByTimeAsync(0);
+
+		expect(clientTransactions).toHaveLength(2);
+
+		answerLocalOffer(clientTransactions[1]);
+
+		await expect(second).resolves.toBe(true);
+	});
+
+	test('should resolve without sending when the session stays busy for the default timeout', async () => {
+		const onResolved = jest.fn();
+
+		dialog.uac_pending_reply = true;
+
+		const renegotiation = RTCSession.prototype.renegotiate.call(session);
+
+		renegotiation.then(onResolved);
+
+		await jest.advanceTimersByTimeAsync(defaultTimeout - 1);
+
+		expect(onResolved).not.toHaveBeenCalled();
+
+		await jest.advanceTimersByTimeAsync(1);
+
+		await expect(renegotiation).resolves.toBe(false);
+
+		dialog.uac_pending_reply = false;
+		await jest.advanceTimersByTimeAsync(0);
+
+		expect(clientTransactions).toHaveLength(0);
+	});
+
+	test('should resolve without sending at once when the timeout is zero', async () => {
+		dialog.uac_pending_reply = true;
+
+		await expect(
+			RTCSession.prototype.renegotiate.call(session, { timeout: 0 })
+		).resolves.toBe(false);
+		expect(session._reOfferWaiters).toEqual([]);
+	});
+
+	test('should resolve without sending when the call ends while waiting', async () => {
+		dialog.uac_pending_reply = true;
+		session._ua = { destroyRTCSession: jest.fn() };
+
+		const renegotiation = RTCSession.prototype.renegotiate.call(session);
+
+		RTCSession.prototype._close.call(session);
+
+		await expect(renegotiation).resolves.toBe(false);
+		await jest.advanceTimersByTimeAsync(defaultTimeout);
+
+		expect(clientTransactions).toHaveLength(0);
 	});
 });

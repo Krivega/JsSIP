@@ -39,6 +39,9 @@ const C = {
  */
 const holdMediaTypes = ['audio', 'video'];
 
+// Time renegotiate() waits for another offer/answer exchange; covers a 491 glare retry.
+const DEFAULT_RENEGOTIATE_TIMEOUT = 5000;
+
 const isFirefoxOrLower = version => {
 	const userAgent = navigator.userAgent;
 	const firefoxMatch = userAgent.match(/Firefox\/(\d+)/);
@@ -224,6 +227,9 @@ module.exports = class RTCSession extends EventEmitter {
 
 		// Flag to indicate PeerConnection ready for new actions.
 		this._rtcReady = true;
+
+		// Renegotiations waiting until the session is ready for a new local offer.
+		this._reOfferWaiters = [];
 
 		// Flag to indicate ICE candidate gathering is finished even if iceGatheringState is not yet 'complete'.
 		this._iceReady = false;
@@ -1451,47 +1457,72 @@ module.exports = class RTCSession extends EventEmitter {
 				return false;
 			}
 
-			if (!this.isReadyToReOffer()) {
+			const sendOffer = () => {
+				const eventHandlers = {
+					succeeded: () => {
+						if (done) {
+							done();
+						}
+						resolve(true);
+					},
+					failed: () => {
+						this._terminateOnMediaRenegotiationFailure(
+							'Media Renegotiation Failed'
+						);
+
+						if (fail) {
+							fail();
+						}
+						reject();
+					},
+				};
+
+				this._setLocalMediaStatus();
+
+				if (options.useUpdate) {
+					this._sendUpdate({
+						sdpOffer: true,
+						eventHandlers,
+						rtcOfferConstraints,
+						extraHeaders: options.extraHeaders,
+					});
+				} else {
+					this._sendReinvite({
+						eventHandlers,
+						rtcOfferConstraints,
+						extraHeaders: options.extraHeaders,
+					});
+				}
+			};
+
+			if (this.isReadyToReOffer()) {
+				sendOffer();
+
+				return true;
+			}
+
+			const { timeout = DEFAULT_RENEGOTIATE_TIMEOUT } = options;
+
+			if (!(timeout > 0)) {
 				resolve(false);
 
 				return false;
 			}
 
-			const eventHandlers = {
-				succeeded: () => {
-					if (done) {
-						done();
-					}
-					resolve(true);
-				},
-				failed: () => {
-					this._terminateOnMediaRenegotiationFailure(
-						'Media Renegotiation Failed'
-					);
+			// Another offer/answer exchange is in progress: send once it completes.
+			this._waitForReadyToReOffer(timeout, isReady => {
+				if (!isReady) {
+					resolve(false);
 
-					if (fail) {
-						fail();
-					}
-					reject();
-				},
-			};
+					return;
+				}
 
-			this._setLocalMediaStatus();
-
-			if (options.useUpdate) {
-				this._sendUpdate({
-					sdpOffer: true,
-					eventHandlers,
-					rtcOfferConstraints,
-					extraHeaders: options.extraHeaders,
-				});
-			} else {
-				this._sendReinvite({
-					eventHandlers,
-					rtcOfferConstraints,
-					extraHeaders: options.extraHeaders,
-				});
-			}
+				try {
+					sendOffer();
+				} catch (error) {
+					reject(error);
+				}
+			});
 		});
 	}
 
@@ -1948,6 +1979,56 @@ module.exports = class RTCSession extends EventEmitter {
 		return true;
 	}
 
+	/**
+	 * Resume renegotiations that wait for the session to become ready.
+	 * Called once the dialog or the PeerConnection releases an offer/answer exchange.
+	 */
+	resumeWaitingReOffers() {
+		if (this._reOfferWaiters.length === 0) {
+			return;
+		}
+
+		// Re-check after the releasing transaction has finished its own state change.
+		Promise.resolve().then(() => {
+			while (
+				this._reOfferWaiters.length > 0 &&
+				(this._status === C.STATUS_WAITING_FOR_ACK ||
+					this._status === C.STATUS_CONFIRMED) &&
+				this.isReadyToReOffer()
+			) {
+				// A resumed renegotiation starts a local offer synchronously, so the loop
+				// usually stops after one step; it continues only if that renegotiation
+				// threw before taking the session, letting the next one go at once.
+				this._settleReOfferWaiter(this._reOfferWaiters[0], true);
+			}
+		});
+	}
+
+	/**
+	 * Wait at most `timeout` ms until the session is ready for a new local offer.
+	 */
+	_waitForReadyToReOffer(timeout, onSettled) {
+		logger.debug('waitForReadyToReOffer()');
+
+		const waiter = { onSettled, timer: null };
+
+		waiter.timer = setTimeout(() => {
+			logger.debug('waitForReadyToReOffer() | timeout');
+
+			this._settleReOfferWaiter(waiter, false);
+		}, timeout);
+
+		this._reOfferWaiters.push(waiter);
+	}
+
+	_settleReOfferWaiter(waiter, isReady) {
+		clearTimeout(waiter.timer);
+
+		this._reOfferWaiters = this._reOfferWaiters.filter(item => item !== waiter);
+
+		waiter.onSettled(isReady);
+	}
+
 	_close() {
 		logger.debug('close()');
 
@@ -1984,6 +2065,11 @@ module.exports = class RTCSession extends EventEmitter {
 
 		// Clear Session Timers.
 		clearTimeout(this._sessionTimers.timer);
+
+		// Release renegotiations that can no longer be sent.
+		for (const waiter of [...this._reOfferWaiters]) {
+			this._settleReOfferWaiter(waiter, false);
+		}
 
 		// Terminate confirmed dialog.
 		if (this._dialog) {
@@ -2271,6 +2357,10 @@ module.exports = class RTCSession extends EventEmitter {
 							})
 						);
 					});
+				})
+				// The PeerConnection may have been the last obstacle for a waiting renegotiation.
+				.finally(() => {
+					this.resumeWaitingReOffers();
 				})
 		);
 	}

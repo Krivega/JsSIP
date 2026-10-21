@@ -138,6 +138,13 @@ export interface HoldOptions extends ExtraHeaders {
 
 export interface RenegotiateOptions extends HoldOptions {
 	rtcOfferConstraints?: RTCOfferOptions;
+	/**
+	 * Maximum time in milliseconds to wait while another offer/answer exchange
+	 * is in progress (default 5000). The renegotiation is sent as soon as the
+	 * session is ready; the promise resolves `false` on timeout. `0` resolves
+	 * `false` immediately for a busy session.
+	 */
+	timeout?: number;
 }
 
 export interface ConnectOptions extends ExtraHeaders {
