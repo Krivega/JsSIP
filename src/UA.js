@@ -266,7 +266,7 @@ module.exports = class UA extends EventEmitter {
 	 *
 	 * -param {String} target
 	 * -param {String} [body]
-	 * -param {Object} [options]
+	 * -param {Object} [options] (supports options.timeout in milliseconds)
 	 *
 	 * -throws {TypeError}
 	 *

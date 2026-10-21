@@ -7,6 +7,7 @@ const logger = new Logger('RequestSender');
 
 // Default event handlers.
 const EventHandlers = {
+	requestTimeout: undefined,
 	onRequestTimeout: () => {},
 	onTransportError: () => {},
 	onReceiveResponse: () => {},
@@ -81,7 +82,8 @@ module.exports = class RequestSender {
 					this._ua,
 					this._ua.transport,
 					this._request,
-					eventHandlers
+					eventHandlers,
+					this._eventHandlers.requestTimeout
 				);
 			}
 		}

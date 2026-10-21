@@ -28,7 +28,7 @@ const C = {
 };
 
 class NonInviteClientTransaction extends EventEmitter {
-	constructor(ua, transport, request, eventHandlers) {
+	constructor(ua, transport, request, eventHandlers, timeout) {
 		super();
 
 		this.type = C.NON_INVITE_CLIENT;
@@ -37,6 +37,8 @@ class NonInviteClientTransaction extends EventEmitter {
 		this.transport = transport;
 		this.request = request;
 		this.eventHandlers = eventHandlers;
+		this.requestTimeout =
+			Number.isFinite(timeout) && timeout > 0 ? timeout : null;
 
 		let via = `SIP/2.0/${transport.via_transport}`;
 
@@ -60,7 +62,7 @@ class NonInviteClientTransaction extends EventEmitter {
 		this.stateChanged(C.STATUS_TRYING);
 		this.F = setTimeout(() => {
 			this.timer_F();
-		}, Timers.TIMER_F);
+		}, this.requestTimeout || Timers.TIMER_F);
 
 		if (!this.transport.send(this.request)) {
 			this.onTransportError();
