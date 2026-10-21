@@ -125,6 +125,10 @@ module.exports = class Dialog {
 
 	set uac_pending_reply(pending) {
 		this._uac_pending_reply = pending;
+
+		if (!pending) {
+			this._notifyOwnerOfferReleased();
+		}
 	}
 
 	get uas_pending_reply() {
@@ -155,6 +159,14 @@ module.exports = class Dialog {
 
 	endLocalOffer() {
 		this._local_offer_state = LocalOfferState.IDLE;
+		this._notifyOwnerOfferReleased();
+	}
+
+	// Let the owner resume local offers that waited for this dialog to become free.
+	_notifyOwnerOfferReleased() {
+		if (typeof this._owner.resumeWaitingReOffers === 'function') {
+			this._owner.resumeWaitingReOffers();
+		}
 	}
 
 	isLocalOfferBlockingRemoteOffer() {
@@ -334,6 +346,7 @@ module.exports = class Dialog {
 							stateChanged
 						);
 						this._uas_pending_reply = false;
+						this._notifyOwnerOfferReleased();
 					}
 				};
 
