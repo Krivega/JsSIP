@@ -21,7 +21,7 @@ module.exports = class Info extends EventEmitter {
 		return this._body;
 	}
 
-	send(contentType, body, options = {}) {
+	async send(contentType, body, options = {}) {
 		this._direction = 'outgoing';
 
 		if (contentType === undefined) {
@@ -49,32 +49,52 @@ module.exports = class Info extends EventEmitter {
 			request: this.request,
 		});
 
-		this._session.sendRequest(JsSIP_C.INFO, {
-			extraHeaders,
-			eventHandlers: {
-				onSuccessResponse: response => {
-					this.emit('succeeded', {
-						originator: 'remote',
-						response,
-					});
+		return new Promise((resolve, reject) => {
+			this._session.sendRequest(JsSIP_C.INFO, {
+				extraHeaders,
+				eventHandlers: {
+					onSuccessResponse: response => {
+						this.emit('succeeded', {
+							originator: 'remote',
+							response,
+						});
+						resolve();
+					},
+					onErrorResponse: response => {
+						this.emit('failed', {
+							originator: 'remote',
+							response,
+						});
+						reject(
+							new Error(
+								response.status_code === 603 &&
+									response.reason_phrase === 'Decline'
+									? 'Error decline with 603'
+									: 'Error response'
+							)
+						);
+					},
+					onTransportError: () => {
+						if (!options.noTerminateWhenError) {
+							this._session.onTransportError();
+						}
+						reject(new Error('Transport response'));
+					},
+					onRequestTimeout: () => {
+						if (!options.noTerminateWhenError) {
+							this._session.onRequestTimeout();
+						}
+						reject(new Error('Request timeout'));
+					},
+					onDialogError: () => {
+						if (!options.noTerminateWhenError) {
+							this._session.onDialogError();
+						}
+						reject(new Error('Dialog error'));
+					},
 				},
-				onErrorResponse: response => {
-					this.emit('failed', {
-						originator: 'remote',
-						response,
-					});
-				},
-				onTransportError: () => {
-					this._session.onTransportError();
-				},
-				onRequestTimeout: () => {
-					this._session.onRequestTimeout();
-				},
-				onDialogError: () => {
-					this._session.onDialogError();
-				},
-			},
-			body,
+				body,
+			});
 		});
 	}
 

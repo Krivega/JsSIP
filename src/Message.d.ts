@@ -8,7 +8,7 @@ import {
 	TerminateOptions,
 } from './RTCSession';
 import { IncomingResponse } from './SIPMessage';
-import { NameAddrHeader } from './NameAddrHeader';
+import NameAddrHeader = require('./NameAddrHeader');
 import { causes } from './Constants';
 
 export interface AcceptOptions extends ExtraHeaders {
@@ -16,9 +16,9 @@ export interface AcceptOptions extends ExtraHeaders {
 }
 
 export interface MessageFailedEvent {
-	originator: Originator;
+	originator: `${Originator}`;
 	response: IncomingResponse;
-	cause?: causes;
+	cause?: `${causes}`;
 }
 
 export type MessageFailedListener = (event: MessageFailedEvent) => void;

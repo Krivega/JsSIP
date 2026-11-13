@@ -72,10 +72,18 @@ async function run() {
 			break;
 		}
 
+		case 'test:types': {
+			buildTypescript();
+			testPublicTypes();
+
+			break;
+		}
+
 		case 'release': {
 			lint();
 			test();
 			buildTypescript();
+			testPublicTypes();
 			executeCmd(`git commit -am '${pkg.version}'`);
 			executeCmd(`git tag -a ${pkg.version} -m '${pkg.version}'`);
 			executeCmd('git push origin master && git push origin --tags');
@@ -209,6 +217,15 @@ function buildTypescript() {
 	// Copy manual .d.ts files to lib/ until code is moved to TS and declaration files
 	// are automatically created.
 	executeCmd("cpx 'src/**/**.d.ts' lib/");
+
+	// Preserve the published 8.x declarations during the internal TS migration.
+	// The generated declarations expose implementation details and stricter
+	// signatures that require a major version for existing consumers.
+	executeCmd("cpx 'types/*.d.ts' lib/");
+}
+
+function testPublicTypes() {
+	executeCmd('tsc -p test/tsconfig.json');
 }
 
 function deleteLib() {
