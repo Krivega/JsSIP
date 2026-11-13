@@ -65,19 +65,32 @@ module.exports = class Info extends EventEmitter {
 							originator: 'remote',
 							response,
 						});
-						reject();
+						reject(
+							new Error(
+								response.status_code === 603 &&
+									response.reason_phrase === 'Decline'
+									? 'Error decline with 603'
+									: 'Error response'
+							)
+						);
 					},
 					onTransportError: () => {
-						this._session.onTransportError();
-						reject();
+						if (!options.noTerminateWhenError) {
+							this._session.onTransportError();
+						}
+						reject(new Error('Transport response'));
 					},
 					onRequestTimeout: () => {
-						this._session.onRequestTimeout();
-						reject();
+						if (!options.noTerminateWhenError) {
+							this._session.onRequestTimeout();
+						}
+						reject(new Error('Request timeout'));
 					},
 					onDialogError: () => {
-						this._session.onDialogError();
-						reject();
+						if (!options.noTerminateWhenError) {
+							this._session.onDialogError();
+						}
+						reject(new Error('Dialog error'));
 					},
 				},
 				body,
