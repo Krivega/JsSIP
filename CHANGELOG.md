@@ -2,6 +2,13 @@
 
 ### NEXT
 
+### 8.0.4
+
+- Restore the 8.x public declaration contract for SIP messages, URI, NameAddrHeader, and WebSocketInterface.
+- Restore empty incoming-message constructors and the legacy IncomingRequest(ua) constructor.
+- Preserve enumerable URI and NameAddrHeader fields across the TypeScript migration.
+- Check the shipped public declarations in CI and before releases.
+
 ### 8.0.3
 
 - Synchronize with versatica/JsSIP master through 19f14c6 (12 upstream commits).

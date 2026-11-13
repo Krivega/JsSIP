@@ -18,9 +18,9 @@ class NameAddrHeader {
 		}
 	}
 
-	#uri: URI;
-	#display_name?: string;
-	#parameters: URI.Parameters;
+	private _uri: URI;
+	private _display_name?: string;
+	private _parameters: URI.Parameters;
 
 	constructor(
 		uri: URI,
@@ -33,8 +33,8 @@ class NameAddrHeader {
 		}
 
 		// Initialize parameters.
-		this.#uri = uri;
-		this.#parameters = {};
+		this._uri = uri;
+		this._parameters = {};
 		this.display_name = display_name;
 
 		for (const param in parameters) {
@@ -45,20 +45,20 @@ class NameAddrHeader {
 	}
 
 	get uri(): URI {
-		return this.#uri;
+		return this._uri;
 	}
 
 	get display_name(): string | undefined {
-		return this.#display_name;
+		return this._display_name;
 	}
 
 	set display_name(value: string | number | undefined) {
-		this.#display_name = value === 0 ? '0' : (value as string | undefined);
+		this._display_name = value === 0 ? '0' : (value as string | undefined);
 	}
 
 	setParam(key: string, value?: string | number | null): void {
 		if (key) {
-			this.#parameters[key.toLowerCase()] =
+			this._parameters[key.toLowerCase()] =
 				typeof value === 'undefined' || value === null
 					? null
 					: value.toString();
@@ -67,7 +67,7 @@ class NameAddrHeader {
 
 	getParam(key: string): string | null | undefined {
 		if (key) {
-			return this.#parameters[key.toLowerCase()];
+			return this._parameters[key.toLowerCase()];
 		}
 
 		return undefined;
@@ -77,7 +77,7 @@ class NameAddrHeader {
 		if (key) {
 			return (
 				(Object.prototype.hasOwnProperty.call(
-					this.#parameters,
+					this._parameters,
 					key.toLowerCase()
 				) &&
 					true) ||
@@ -90,10 +90,10 @@ class NameAddrHeader {
 
 	deleteParam(parameter: string): string | null | undefined {
 		parameter = parameter.toLowerCase();
-		if (Object.prototype.hasOwnProperty.call(this.#parameters, parameter)) {
-			const value = this.#parameters[parameter];
+		if (Object.prototype.hasOwnProperty.call(this._parameters, parameter)) {
+			const value = this._parameters[parameter];
 
-			delete this.#parameters[parameter];
+			delete this._parameters[parameter];
 
 			return value;
 		}
@@ -102,14 +102,14 @@ class NameAddrHeader {
 	}
 
 	clearParams(): void {
-		this.#parameters = {};
+		this._parameters = {};
 	}
 
 	clone(): NameAddrHeader {
 		return new NameAddrHeader(
-			this.#uri.clone(),
-			this.#display_name,
-			JSON.parse(JSON.stringify(this.#parameters)) as URI.Parameters
+			this._uri.clone(),
+			this._display_name,
+			JSON.parse(JSON.stringify(this._parameters)) as URI.Parameters
 		);
 	}
 
@@ -118,18 +118,18 @@ class NameAddrHeader {
 	}
 
 	toString(): string {
-		let body = this.#display_name
-			? `"${this.#quote(this.#display_name)}" `
+		let body = this._display_name
+			? `"${this.#quote(this._display_name)}" `
 			: '';
 
-		body += `<${this.#uri.toString()}>`;
+		body += `<${this._uri.toString()}>`;
 
-		for (const parameter in this.#parameters) {
-			if (Object.prototype.hasOwnProperty.call(this.#parameters, parameter)) {
+		for (const parameter in this._parameters) {
+			if (Object.prototype.hasOwnProperty.call(this._parameters, parameter)) {
 				body += `;${parameter}`;
 
-				if (this.#parameters[parameter] !== null) {
-					body += `=${this.#parameters[parameter]}`;
+				if (this._parameters[parameter] !== null) {
+					body += `=${this._parameters[parameter]}`;
 				}
 			}
 		}

@@ -540,6 +540,19 @@ export type IncomingResponseParams = IncomingMessageParams & {
 	reason_phrase: string;
 };
 
+// The 8.x public API permits constructing empty messages and filling them later.
+// Parser-created messages still use the complete, validated parameter objects.
+function emptyIncomingMessageParams(): IncomingMessageParams {
+	return {
+		data: null!,
+		headers: {},
+		method: null!,
+		from: null!,
+		to: null!,
+		body: null!,
+	};
+}
+
 export class IncomingMessage {
 	/* Header store operations.
 	 *
@@ -691,25 +704,27 @@ export class IncomingMessage {
 	replaces?: Grammar.ReplacesHeader;
 	event?: Grammar.EventHeader;
 
-	constructor({
-		data,
-		headers,
-		method,
-		via,
-		via_branch,
-		call_id,
-		cseq,
-		from,
-		from_tag,
-		to,
-		to_tag,
-		body,
-		session_expires,
-		session_expires_refresher,
-		refer_to,
-		replaces,
-		event,
-	}: IncomingMessageParams) {
+	constructor(
+		{
+			data,
+			headers,
+			method,
+			via,
+			via_branch,
+			call_id,
+			cseq,
+			from,
+			from_tag,
+			to,
+			to_tag,
+			body,
+			session_expires,
+			session_expires_refresher,
+			refer_to,
+			replaces,
+			event,
+		}: IncomingMessageParams = emptyIncomingMessageParams()
+	) {
 		this.data = data;
 		this.headers = headers;
 		this.method = method;
@@ -821,11 +836,16 @@ export class IncomingRequest extends IncomingMessage {
 	transport: Transport | null;
 	server_transaction: ServerTransactionLike | null;
 
-	constructor({ ua, ruri, ...params }: IncomingRequestParams) {
+	constructor();
+	constructor(params: IncomingRequestParams);
+	constructor(ua: UALike);
+	constructor(paramsOrUa?: IncomingRequestParams | UALike) {
+		const params = paramsOrUa && 'ruri' in paramsOrUa ? paramsOrUa : undefined;
+
 		super(params);
 
-		this.ua = ua;
-		this.ruri = ruri;
+		this.ua = params ? params.ua : (paramsOrUa as UALike);
+		this.ruri = params ? params.ruri : null!;
 		this.transport = null;
 		this.server_transaction = null;
 	}
@@ -1033,11 +1053,13 @@ export class IncomingResponse extends IncomingMessage {
 	status_code: number;
 	reason_phrase: string;
 
-	constructor({
-		status_code,
-		reason_phrase,
-		...params
-	}: IncomingResponseParams) {
+	constructor(
+		{ status_code, reason_phrase, ...params }: IncomingResponseParams = {
+			...emptyIncomingMessageParams(),
+			status_code: null!,
+			reason_phrase: null!,
+		}
+	) {
 		super(params);
 
 		this.status_code = status_code;

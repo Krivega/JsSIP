@@ -26,12 +26,12 @@ class URI {
 		}
 	}
 
-	#scheme: string;
-	#user?: string;
-	#host: string;
-	#port?: number | null;
-	#parameters: URI.Parameters;
-	#headers: URI.Headers;
+	private _scheme: string;
+	private _user?: string;
+	private _host: string;
+	private _port?: number | null;
+	private _parameters: URI.Parameters;
+	private _headers: URI.Headers;
 
 	constructor(
 		scheme: URI.URIScheme | undefined,
@@ -47,13 +47,13 @@ class URI {
 		}
 
 		// Initialize parameters.
-		this.#parameters = {};
-		this.#headers = {};
+		this._parameters = {};
+		this._headers = {};
 
-		this.#scheme = scheme || SIP;
-		this.#user = user;
-		this.#host = host;
-		this.#port = port;
+		this._scheme = scheme || SIP;
+		this._user = user;
+		this._host = host;
+		this._port = port;
 
 		for (const param in parameters) {
 			if (Object.prototype.hasOwnProperty.call(parameters, param)) {
@@ -69,40 +69,40 @@ class URI {
 	}
 
 	get scheme(): string {
-		return this.#scheme;
+		return this._scheme;
 	}
 
 	set scheme(value: string) {
-		this.#scheme = value.toLowerCase();
+		this._scheme = value.toLowerCase();
 	}
 
 	get user(): string | undefined {
-		return this.#user;
+		return this._user;
 	}
 
 	set user(value: string | undefined) {
-		this.#user = value;
+		this._user = value;
 	}
 
 	get host(): string {
-		return this.#host;
+		return this._host;
 	}
 
 	set host(value: string) {
-		this.#host = value.toLowerCase();
+		this._host = value.toLowerCase();
 	}
 
 	get port(): number | null | undefined {
-		return this.#port;
+		return this._port;
 	}
 
 	set port(value: number | string | null | undefined) {
-		this.#port = value === 0 ? value : parseInt(String(value), 10) || null;
+		this._port = value === 0 ? value : parseInt(String(value), 10) || null;
 	}
 
 	setParam(key: string, value?: string | number | null): void {
 		if (key) {
-			this.#parameters[key.toLowerCase()] =
+			this._parameters[key.toLowerCase()] =
 				typeof value === 'undefined' || value === null
 					? null
 					: value.toString();
@@ -111,7 +111,7 @@ class URI {
 
 	getParam(key: string): string | null | undefined {
 		if (key) {
-			return this.#parameters[key.toLowerCase()];
+			return this._parameters[key.toLowerCase()];
 		}
 
 		return undefined;
@@ -121,7 +121,7 @@ class URI {
 		if (key) {
 			return (
 				(Object.prototype.hasOwnProperty.call(
-					this.#parameters,
+					this._parameters,
 					key.toLowerCase()
 				) &&
 					true) ||
@@ -134,10 +134,10 @@ class URI {
 
 	deleteParam(parameter: string): string | null | undefined {
 		parameter = parameter.toLowerCase();
-		if (Object.prototype.hasOwnProperty.call(this.#parameters, parameter)) {
-			const value = this.#parameters[parameter];
+		if (Object.prototype.hasOwnProperty.call(this._parameters, parameter)) {
+			const value = this._parameters[parameter];
 
-			delete this.#parameters[parameter];
+			delete this._parameters[parameter];
 
 			return value;
 		}
@@ -146,16 +146,16 @@ class URI {
 	}
 
 	clearParams(): void {
-		this.#parameters = {};
+		this._parameters = {};
 	}
 
 	setHeader(name: string, value: string | string[]): void {
-		this.#headers[headerize(name)] = Array.isArray(value) ? value : [value];
+		this._headers[headerize(name)] = Array.isArray(value) ? value : [value];
 	}
 
 	getHeader(name: string): string[] | undefined {
 		if (name) {
-			return this.#headers[headerize(name)];
+			return this._headers[headerize(name)];
 		}
 
 		return undefined;
@@ -164,7 +164,7 @@ class URI {
 	hasHeader(name: string): boolean | undefined {
 		if (name) {
 			return (
-				(Object.prototype.hasOwnProperty.call(this.#headers, headerize(name)) &&
+				(Object.prototype.hasOwnProperty.call(this._headers, headerize(name)) &&
 					true) ||
 				false
 			);
@@ -175,10 +175,10 @@ class URI {
 
 	deleteHeader(header: string): string[] | undefined {
 		header = headerize(header);
-		if (Object.prototype.hasOwnProperty.call(this.#headers, header)) {
-			const value = this.#headers[header];
+		if (Object.prototype.hasOwnProperty.call(this._headers, header)) {
+			const value = this._headers[header];
 
-			delete this.#headers[header];
+			delete this._headers[header];
 
 			return value;
 		}
@@ -187,46 +187,46 @@ class URI {
 	}
 
 	clearHeaders(): void {
-		this.#headers = {};
+		this._headers = {};
 	}
 
 	clone(): URI {
 		return new URI(
-			this.#scheme,
-			this.#user,
-			this.#host,
-			this.#port,
-			JSON.parse(JSON.stringify(this.#parameters)) as URI.Parameters,
-			JSON.parse(JSON.stringify(this.#headers)) as URI.Headers
+			this._scheme,
+			this._user,
+			this._host,
+			this._port,
+			JSON.parse(JSON.stringify(this._parameters)) as URI.Parameters,
+			JSON.parse(JSON.stringify(this._headers)) as URI.Headers
 		);
 	}
 
 	toString(): string {
 		const headers = [];
 
-		let uri = `${this.#scheme}:`;
+		let uri = `${this._scheme}:`;
 
-		if (this.#user) {
-			uri += `${escapeUser(this.#user)}@`;
+		if (this._user) {
+			uri += `${escapeUser(this._user)}@`;
 		}
-		uri += this.#host;
-		if (this.#port || this.#port === 0) {
-			uri += `:${this.#port}`;
+		uri += this._host;
+		if (this._port || this._port === 0) {
+			uri += `:${this._port}`;
 		}
 
-		for (const parameter in this.#parameters) {
-			if (Object.prototype.hasOwnProperty.call(this.#parameters, parameter)) {
+		for (const parameter in this._parameters) {
+			if (Object.prototype.hasOwnProperty.call(this._parameters, parameter)) {
 				uri += `;${parameter}`;
 
-				if (this.#parameters[parameter] !== null) {
-					uri += `=${this.#parameters[parameter]}`;
+				if (this._parameters[parameter] !== null) {
+					uri += `=${this._parameters[parameter]}`;
 				}
 			}
 		}
 
-		for (const header in this.#headers) {
-			if (Object.prototype.hasOwnProperty.call(this.#headers, header)) {
-				for (const item of this.#headers[header] ?? []) {
+		for (const header in this._headers) {
+			if (Object.prototype.hasOwnProperty.call(this._headers, header)) {
+				for (const item of this._headers[header] ?? []) {
 					headers.push(`${header}=${item}`);
 				}
 			}
@@ -240,14 +240,14 @@ class URI {
 	}
 
 	toAor(show_port?: boolean): string {
-		let aor = `${this.#scheme}:`;
+		let aor = `${this._scheme}:`;
 
-		if (this.#user) {
-			aor += `${escapeUser(this.#user)}@`;
+		if (this._user) {
+			aor += `${escapeUser(this._user)}@`;
 		}
-		aor += this.#host;
-		if (show_port && (this.#port || this.#port === 0)) {
-			aor += `:${this.#port}`;
+		aor += this._host;
+		if (show_port && (this._port || this._port === 0)) {
+			aor += `:${this._port}`;
 		}
 
 		return aor;
