@@ -399,10 +399,22 @@ export class RTCSession extends EventEmitter {
 
 	sendDTMF(tones: string | number, options?: DTMFOptions): void;
 
+	/**
+	 * Resolves on a 2xx response. Once sent, rejects with an `Error` whose
+	 * message is 'Error decline with 603' (603 Decline), 'Error response'
+	 * (other final non-2xx responses), 'Transport response', 'Request timeout'
+	 * or 'Dialog error'.
+	 */
 	sendInfo(
 		contentType: string,
 		body?: string,
-		options?: ExtraHeaders & { noTerminateWhenError?: boolean }
+		options?: ExtraHeaders & {
+			/**
+			 * Do not terminate the session on a transport error, request timeout
+			 * or dialog error; the promise is still rejected.
+			 */
+			noTerminateWhenError?: boolean;
+		}
 	): Promise<void>;
 
 	hold(options?: HoldOptions, done?: VoidFunction): boolean;
