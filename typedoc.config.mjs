@@ -4,13 +4,19 @@
 
 /** @type {Partial<import('typedoc').TypeDocOptions>} */
 const config = {
-	entryPoints: ['src/JsSIP.js'],
+	entryPoints: [
+		'src/JsSIP.d.ts',
+		'src/Message.d.ts',
+		'src/Notifier.d.ts',
+		'src/Subscriber.d.ts',
+		'src/Transport.ts',
+	],
 	out: 'docs',
 	skipErrorChecking: false,
-	exclude: ['src/**/*.d.ts', 'src/test/**/test-*.ts'],
+	exclude: ['src/test/**/test-*.ts'],
 	excludePrivate: true,
 	excludeProtected: true,
-	excludeNotDocumented: true,
+	excludeNotDocumented: false,
 	excludeInternal: true,
 	excludeExternals: true,
 	includeVersion: true,

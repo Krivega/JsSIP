@@ -2,6 +2,17 @@
 
 ### NEXT
 
+### 8.0.3
+
+- Synchronize with versatica/JsSIP master through 19f14c6 (12 upstream commits).
+- Adopt upstream TypeScript modules while preserving fork request timeouts, socket error handling, and public exports.
+- Preserve active calls on SIP INFO errors when noTerminateWhenError is enabled (#19).
+- Add regression coverage for custom OPTIONS timeouts and socket recovery.
+
+### 3.13.9
+
+- Dialog: Fix, Dialog.isTerminated() never returns true (#981). Thanks to @deltapath-eric.
+
 ### 3.13.8
 
 - RTCSession: Fix, remove refer_to uri headers when creating target uri for INVITE (#971). Thanks to @karstenluedtke.

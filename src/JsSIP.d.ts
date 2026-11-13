@@ -7,16 +7,19 @@ import * as Utils from './Utils';
 
 export { C, Exceptions, Grammar, Utils };
 
+import URI = require('./URI');
+import NameAddrHeader = require('./NameAddrHeader');
+
 export { UA } from './UA';
-export { URI } from './URI';
-export { Options } from './Options';
-export { NameAddrHeader } from './NameAddrHeader';
+export { URI, NameAddrHeader };
 export { WebSocketInterface } from './WebSocketInterface';
-export { Socket, WeightedSocket } from './Socket';
+export type { Socket, WeightedSocket } from './Socket';
 
 export * from './UA';
 export * from './RTCSession';
-export * from './URI';
+export type URIScheme = URI.URIScheme;
+export type Parameters = URI.Parameters;
+export type Headers = URI.Headers;
 export * from './Options';
 export * from './core';
 export * from './Registrator';

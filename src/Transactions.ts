@@ -1,8 +1,10 @@
-const EventEmitter = require('events').EventEmitter;
-const Logger = require('./Logger');
-const JsSIP_C = require('./Constants');
-const SIPMessage = require('./SIPMessage');
-const Timers = require('./Timers');
+import { EventEmitter } from 'events';
+
+import * as JsSIP_C from './Constants';
+import { Logger } from './Logger';
+import * as SIPMessage from './SIPMessage';
+import * as Timers from './Timers';
+import type { Transport } from './Transport';
 
 const loggernict = new Logger('NonInviteClientTransaction');
 const loggerict = new Logger('InviteClientTransaction');
@@ -10,35 +12,110 @@ const loggeract = new Logger('AckClientTransaction');
 const loggernist = new Logger('NonInviteServerTransaction');
 const loggerist = new Logger('InviteServerTransaction');
 
-const C = {
-	// Transaction states.
-	STATUS_TRYING: 1,
-	STATUS_PROCEEDING: 2,
-	STATUS_CALLING: 3,
-	STATUS_ACCEPTED: 4,
-	STATUS_COMPLETED: 5,
-	STATUS_TERMINATED: 6,
-	STATUS_CONFIRMED: 7,
+/**
+ * Transaction states.
+ */
+export enum Status {
+	TRYING = 1,
+	PROCEEDING = 2,
+	CALLING = 3,
+	ACCEPTED = 4,
+	COMPLETED = 5,
+	TERMINATED = 6,
+	CONFIRMED = 7,
+}
 
-	// Transaction types.
-	NON_INVITE_CLIENT: 'nict',
-	NON_INVITE_SERVER: 'nist',
-	INVITE_CLIENT: 'ict',
-	INVITE_SERVER: 'ist',
-};
+/**
+ * Transaction types, each also being the key of the corresponding registry in
+ * the UA.
+ */
+export enum Type {
+	NON_INVITE_CLIENT = 'nict',
+	NON_INVITE_SERVER = 'nist',
+	INVITE_CLIENT = 'ict',
+	INVITE_SERVER = 'ist',
+}
 
-class NonInviteClientTransaction extends EventEmitter {
-	constructor(ua, transport, request, eventHandlers, timeout) {
+/**
+ * The callbacks a client transaction reports to whoever sent the request.
+ */
+export interface ClientTransactionEventHandlers {
+	onRequestTimeout(): void;
+	onTransportError(): void;
+	onReceiveResponse(response: SIPMessage.IncomingResponse): void;
+}
+
+/**
+ * Any transaction held in the UA transaction tables.
+ */
+export type Transaction =
+	| NonInviteClientTransaction
+	| InviteClientTransaction
+	| NonInviteServerTransaction
+	| InviteServerTransaction;
+
+/**
+ * The UA transaction tables, indexed by transaction id (the Via branch).
+ */
+export interface TransactionRegistry {
+	nict: Record<string, NonInviteClientTransaction>;
+	nist: Record<string, NonInviteServerTransaction>;
+	ict: Record<string, InviteClientTransaction>;
+	ist: Record<string, InviteServerTransaction>;
+}
+
+/**
+ * The `UA` surface transactions depend on.
+ *
+ * TODO: Replace with `import type { UA } from './UA'` once `UA` is ported to
+ * TypeScript. It is declared structurally (on top of the `UALike` that
+ * `SIPMessage` already needs) so that this module does not depend on the
+ * still JavaScript `UA` module.
+ */
+export interface TransactionUA extends SIPMessage.UALike {
+	readonly configuration: SIPMessage.UALike['configuration'] & {
+		via_host: string;
+	};
+
+	newTransaction(transaction: Transaction): void;
+	destroyTransaction(transaction: Transaction): void;
+}
+
+export class NonInviteClientTransaction extends EventEmitter {
+	type: Type;
+	id: string;
+	ua: TransactionUA;
+	transport: Transport;
+	request: SIPMessage.OutgoingRequest;
+	eventHandlers: ClientTransactionEventHandlers;
+	requestTimeout: number | null;
+
+	/* NOTE: Not set by the constructor. `state` is set by `stateChanged()` and
+	 * the timer handles when their timers are armed.
+	 */
+	state?: Status;
+	F?: ReturnType<typeof setTimeout>;
+	K?: ReturnType<typeof setTimeout>;
+
+	constructor(
+		ua: TransactionUA,
+		transport: Transport,
+		request: SIPMessage.OutgoingRequest,
+		eventHandlers: ClientTransactionEventHandlers,
+		timeout?: number
+	) {
 		super();
 
-		this.type = C.NON_INVITE_CLIENT;
+		this.type = Type.NON_INVITE_CLIENT;
 		this.id = `z9hG4bK${Math.floor(Math.random() * 10000000)}`;
 		this.ua = ua;
 		this.transport = transport;
 		this.request = request;
 		this.eventHandlers = eventHandlers;
 		this.requestTimeout =
-			Number.isFinite(timeout) && timeout > 0 ? timeout : null;
+			typeof timeout === 'number' && Number.isFinite(timeout) && timeout > 0
+				? timeout
+				: null;
 
 		let via = `SIP/2.0/${transport.via_transport}`;
 
@@ -49,17 +126,13 @@ class NonInviteClientTransaction extends EventEmitter {
 		this.ua.newTransaction(this);
 	}
 
-	get C() {
-		return C;
-	}
-
-	stateChanged(state) {
+	stateChanged(state: Status): void {
 		this.state = state;
 		this.emit('stateChanged');
 	}
 
-	send() {
-		this.stateChanged(C.STATUS_TRYING);
+	send(): void {
+		this.stateChanged(Status.TRYING);
 		this.F = setTimeout(() => {
 			this.timer_F();
 		}, this.requestTimeout || Timers.TIMER_F);
@@ -69,46 +142,46 @@ class NonInviteClientTransaction extends EventEmitter {
 		}
 	}
 
-	onTransportError() {
+	onTransportError(): void {
 		loggernict.debug(
 			`transport error occurred, deleting transaction ${this.id}`
 		);
 		clearTimeout(this.F);
 		clearTimeout(this.K);
-		this.stateChanged(C.STATUS_TERMINATED);
+		this.stateChanged(Status.TERMINATED);
 		this.ua.destroyTransaction(this);
 		this.eventHandlers.onTransportError();
 	}
 
-	timer_F() {
+	timer_F(): void {
 		loggernict.debug(`Timer F expired for transaction ${this.id}`);
-		this.stateChanged(C.STATUS_TERMINATED);
+		this.stateChanged(Status.TERMINATED);
 		this.ua.destroyTransaction(this);
 		this.eventHandlers.onRequestTimeout();
 	}
 
-	timer_K() {
-		this.stateChanged(C.STATUS_TERMINATED);
+	timer_K(): void {
+		this.stateChanged(Status.TERMINATED);
 		this.ua.destroyTransaction(this);
 	}
 
-	receiveResponse(response) {
+	receiveResponse(response: SIPMessage.IncomingResponse): void {
 		const status_code = response.status_code;
 
 		if (status_code < 200) {
 			switch (this.state) {
-				case C.STATUS_TRYING:
-				case C.STATUS_PROCEEDING: {
-					this.stateChanged(C.STATUS_PROCEEDING);
+				case Status.TRYING:
+				case Status.PROCEEDING: {
+					this.stateChanged(Status.PROCEEDING);
 					this.eventHandlers.onReceiveResponse(response);
 					break;
 				}
 			}
 		} else {
 			switch (this.state) {
-				case C.STATUS_TRYING:
-				case C.STATUS_PROCEEDING: {
-					this.stateChanged(C.STATUS_COMPLETED);
+				case Status.TRYING:
+				case Status.PROCEEDING: {
+					this.stateChanged(Status.COMPLETED);
 					clearTimeout(this.F);
 
 					if (status_code === 408) {
@@ -122,7 +195,7 @@ class NonInviteClientTransaction extends EventEmitter {
 					}, Timers.TIMER_K);
 					break;
 				}
-				case C.STATUS_COMPLETED: {
+				case Status.COMPLETED: {
 					break;
 				}
 			}
@@ -130,11 +203,31 @@ class NonInviteClientTransaction extends EventEmitter {
 	}
 }
 
-class InviteClientTransaction extends EventEmitter {
-	constructor(ua, transport, request, eventHandlers) {
+export class InviteClientTransaction extends EventEmitter {
+	type: Type;
+	id: string;
+	ua: TransactionUA;
+	transport: Transport;
+	request: SIPMessage.OutgoingRequest;
+	eventHandlers: ClientTransactionEventHandlers;
+
+	/* NOTE: Not set by the constructor. `state` is set by `stateChanged()` and
+	 * the timer handles when their timers are armed.
+	 */
+	state?: Status;
+	B?: ReturnType<typeof setTimeout>;
+	D?: ReturnType<typeof setTimeout>;
+	M?: ReturnType<typeof setTimeout>;
+
+	constructor(
+		ua: TransactionUA,
+		transport: Transport,
+		request: SIPMessage.OutgoingRequest,
+		eventHandlers: ClientTransactionEventHandlers
+	) {
 		super();
 
-		this.type = C.INVITE_CLIENT;
+		this.type = Type.INVITE_CLIENT;
 		this.id = `z9hG4bK${Math.floor(Math.random() * 10000000)}`;
 		this.ua = ua;
 		this.transport = transport;
@@ -151,17 +244,13 @@ class InviteClientTransaction extends EventEmitter {
 		this.ua.newTransaction(this);
 	}
 
-	get C() {
-		return C;
-	}
-
-	stateChanged(state) {
+	stateChanged(state: Status): void {
 		this.state = state;
 		this.emit('stateChanged');
 	}
 
-	send() {
-		this.stateChanged(C.STATUS_CALLING);
+	send(): void {
+		this.stateChanged(Status.CALLING);
 		this.B = setTimeout(() => {
 			this.timer_B();
 		}, Timers.TIMER_B);
@@ -171,65 +260,69 @@ class InviteClientTransaction extends EventEmitter {
 		}
 	}
 
-	onTransportError() {
+	onTransportError(): void {
 		clearTimeout(this.B);
 		clearTimeout(this.D);
 		clearTimeout(this.M);
 
-		if (this.state !== C.STATUS_ACCEPTED) {
+		if (this.state !== Status.ACCEPTED) {
 			loggerict.debug(
 				`transport error occurred, deleting transaction ${this.id}`
 			);
 			this.eventHandlers.onTransportError();
 		}
 
-		this.stateChanged(C.STATUS_TERMINATED);
+		this.stateChanged(Status.TERMINATED);
 		this.ua.destroyTransaction(this);
 	}
 
 	// RFC 6026 7.2.
-	timer_M() {
+	timer_M(): void {
 		loggerict.debug(`Timer M expired for transaction ${this.id}`);
 
-		if (this.state === C.STATUS_ACCEPTED) {
+		if (this.state === Status.ACCEPTED) {
 			clearTimeout(this.B);
-			this.stateChanged(C.STATUS_TERMINATED);
+			this.stateChanged(Status.TERMINATED);
 			this.ua.destroyTransaction(this);
 		}
 	}
 
 	// RFC 3261 17.1.1.
-	timer_B() {
+	timer_B(): void {
 		loggerict.debug(`Timer B expired for transaction ${this.id}`);
-		if (this.state === C.STATUS_CALLING) {
-			this.stateChanged(C.STATUS_TERMINATED);
+		if (this.state === Status.CALLING) {
+			this.stateChanged(Status.TERMINATED);
 			this.ua.destroyTransaction(this);
 			this.eventHandlers.onRequestTimeout();
 		}
 	}
 
-	timer_D() {
+	timer_D(): void {
 		loggerict.debug(`Timer D expired for transaction ${this.id}`);
 		clearTimeout(this.B);
-		this.stateChanged(C.STATUS_TERMINATED);
+		this.stateChanged(Status.TERMINATED);
 		this.ua.destroyTransaction(this);
 	}
 
-	sendACK(response) {
+	sendACK(response: SIPMessage.IncomingResponse): void {
+		/* NOTE: The non-null assertions below just reproduce the original
+		 * behaviour: the header getters are typed as possibly `undefined` but
+		 * their value is forwarded unconditionally.
+		 */
 		const ack = new SIPMessage.OutgoingRequest(
 			JsSIP_C.ACK,
 			this.request.ruri,
 			this.ua,
 			{
 				route_set: this.request.getHeaders('route'),
-				call_id: this.request.getHeader('call-id'),
+				call_id: this.request.getHeader('call-id') as string,
 				cseq: this.request.cseq,
 			}
 		);
 
-		ack.setHeader('from', this.request.getHeader('from'));
-		ack.setHeader('via', this.request.getHeader('via'));
-		ack.setHeader('to', response.getHeader('to'));
+		ack.setHeader('from', this.request.getHeader('from')!);
+		ack.setHeader('via', this.request.getHeader('via')!);
+		ack.setHeader('to', response.getHeader('to')!);
 
 		this.D = setTimeout(() => {
 			this.timer_D();
@@ -238,9 +331,9 @@ class InviteClientTransaction extends EventEmitter {
 		this.transport.send(ack);
 	}
 
-	cancel(reason) {
+	cancel(reason?: string): void {
 		// Send only if a provisional response (>100) has been received.
-		if (this.state !== C.STATUS_PROCEEDING) {
+		if (this.state !== Status.PROCEEDING) {
 			return;
 		}
 
@@ -250,14 +343,14 @@ class InviteClientTransaction extends EventEmitter {
 			this.ua,
 			{
 				route_set: this.request.getHeaders('route'),
-				call_id: this.request.getHeader('call-id'),
+				call_id: this.request.getHeader('call-id') as string,
 				cseq: this.request.cseq,
 			}
 		);
 
-		cancel.setHeader('from', this.request.getHeader('from'));
-		cancel.setHeader('via', this.request.getHeader('via'));
-		cancel.setHeader('to', this.request.getHeader('to'));
+		cancel.setHeader('from', this.request.getHeader('from')!);
+		cancel.setHeader('via', this.request.getHeader('via')!);
+		cancel.setHeader('to', this.request.getHeader('to')!);
 
 		if (reason) {
 			cancel.setHeader('reason', reason);
@@ -266,47 +359,47 @@ class InviteClientTransaction extends EventEmitter {
 		this.transport.send(cancel);
 	}
 
-	receiveResponse(response) {
+	receiveResponse(response: SIPMessage.IncomingResponse): void {
 		const status_code = response.status_code;
 
 		if (status_code >= 100 && status_code <= 199) {
 			switch (this.state) {
-				case C.STATUS_CALLING: {
-					this.stateChanged(C.STATUS_PROCEEDING);
+				case Status.CALLING: {
+					this.stateChanged(Status.PROCEEDING);
 					this.eventHandlers.onReceiveResponse(response);
 					break;
 				}
-				case C.STATUS_PROCEEDING: {
+				case Status.PROCEEDING: {
 					this.eventHandlers.onReceiveResponse(response);
 					break;
 				}
 			}
 		} else if (status_code >= 200 && status_code <= 299) {
 			switch (this.state) {
-				case C.STATUS_CALLING:
-				case C.STATUS_PROCEEDING: {
-					this.stateChanged(C.STATUS_ACCEPTED);
+				case Status.CALLING:
+				case Status.PROCEEDING: {
+					this.stateChanged(Status.ACCEPTED);
 					this.M = setTimeout(() => {
 						this.timer_M();
 					}, Timers.TIMER_M);
 					this.eventHandlers.onReceiveResponse(response);
 					break;
 				}
-				case C.STATUS_ACCEPTED: {
+				case Status.ACCEPTED: {
 					this.eventHandlers.onReceiveResponse(response);
 					break;
 				}
 			}
 		} else if (status_code >= 300 && status_code <= 699) {
 			switch (this.state) {
-				case C.STATUS_CALLING:
-				case C.STATUS_PROCEEDING: {
-					this.stateChanged(C.STATUS_COMPLETED);
+				case Status.CALLING:
+				case Status.PROCEEDING: {
+					this.stateChanged(Status.COMPLETED);
 					this.sendACK(response);
 					this.eventHandlers.onReceiveResponse(response);
 					break;
 				}
-				case C.STATUS_COMPLETED: {
+				case Status.COMPLETED: {
 					this.sendACK(response);
 					break;
 				}
@@ -315,8 +408,18 @@ class InviteClientTransaction extends EventEmitter {
 	}
 }
 
-class AckClientTransaction extends EventEmitter {
-	constructor(ua, transport, request, eventHandlers) {
+export class AckClientTransaction extends EventEmitter {
+	id: string;
+	transport: Transport;
+	request: SIPMessage.OutgoingRequest;
+	eventHandlers: ClientTransactionEventHandlers;
+
+	constructor(
+		ua: TransactionUA,
+		transport: Transport,
+		request: SIPMessage.OutgoingRequest,
+		eventHandlers: ClientTransactionEventHandlers
+	) {
 		super();
 
 		this.id = `z9hG4bK${Math.floor(Math.random() * 10000000)}`;
@@ -331,55 +434,65 @@ class AckClientTransaction extends EventEmitter {
 		this.request.setHeader('via', via);
 	}
 
-	get C() {
-		return C;
-	}
-
-	send() {
+	send(): void {
 		if (!this.transport.send(this.request)) {
 			this.onTransportError();
 		}
 	}
 
-	onTransportError() {
+	onTransportError(): void {
 		loggeract.debug(`transport error occurred for transaction ${this.id}`);
 		this.eventHandlers.onTransportError();
 	}
 }
 
-class NonInviteServerTransaction extends EventEmitter {
-	constructor(ua, transport, request) {
+export class NonInviteServerTransaction extends EventEmitter {
+	type: Type;
+	id: string;
+	ua: TransactionUA;
+	transport: Transport;
+	request: SIPMessage.IncomingRequest;
+	last_response: string;
+	state: Status;
+
+	/* NOTE: Not set by the constructor. `transportError` is set by
+	 * `onTransportError()` and `J` when its timer is armed.
+	 */
+	transportError?: boolean;
+	J?: ReturnType<typeof setTimeout>;
+
+	constructor(
+		ua: TransactionUA,
+		transport: Transport,
+		request: SIPMessage.IncomingRequest
+	) {
 		super();
 
-		this.type = C.NON_INVITE_SERVER;
-		this.id = request.via_branch;
+		this.type = Type.NON_INVITE_SERVER;
+		this.id = request.via_branch!;
 		this.ua = ua;
 		this.transport = transport;
 		this.request = request;
 		this.last_response = '';
 		request.server_transaction = this;
 
-		this.state = C.STATUS_TRYING;
+		this.state = Status.TRYING;
 
 		ua.newTransaction(this);
 	}
 
-	get C() {
-		return C;
-	}
-
-	stateChanged(state) {
+	stateChanged(state: Status): void {
 		this.state = state;
 		this.emit('stateChanged');
 	}
 
-	timer_J() {
+	timer_J(): void {
 		loggernist.debug(`Timer J expired for transaction ${this.id}`);
-		this.stateChanged(C.STATUS_TERMINATED);
+		this.stateChanged(Status.TERMINATED);
 		this.ua.destroyTransaction(this);
 	}
 
-	onTransportError() {
+	onTransportError(): void {
 		if (!this.transportError) {
 			this.transportError = true;
 
@@ -388,12 +501,17 @@ class NonInviteServerTransaction extends EventEmitter {
 			);
 
 			clearTimeout(this.J);
-			this.stateChanged(C.STATUS_TERMINATED);
+			this.stateChanged(Status.TERMINATED);
 			this.ua.destroyTransaction(this);
 		}
 	}
 
-	receiveResponse(status_code, response, onSuccess, onFailure) {
+	receiveResponse(
+		status_code: number,
+		response: string,
+		onSuccess?: () => void,
+		onFailure?: () => void
+	): void {
 		if (status_code === 100) {
 			/* RFC 4320 4.1
 			 * 'A SIP element MUST NOT
@@ -401,14 +519,14 @@ class NonInviteServerTransaction extends EventEmitter {
 			 * Status-Code other than 100 to a non-INVITE request.'
 			 */
 			switch (this.state) {
-				case C.STATUS_TRYING: {
-					this.stateChanged(C.STATUS_PROCEEDING);
+				case Status.TRYING: {
+					this.stateChanged(Status.PROCEEDING);
 					if (!this.transport.send(response)) {
 						this.onTransportError();
 					}
 					break;
 				}
-				case C.STATUS_PROCEEDING: {
+				case Status.PROCEEDING: {
 					this.last_response = response;
 					if (!this.transport.send(response)) {
 						this.onTransportError();
@@ -423,9 +541,9 @@ class NonInviteServerTransaction extends EventEmitter {
 			}
 		} else if (status_code >= 200 && status_code <= 699) {
 			switch (this.state) {
-				case C.STATUS_TRYING:
-				case C.STATUS_PROCEEDING: {
-					this.stateChanged(C.STATUS_COMPLETED);
+				case Status.TRYING:
+				case Status.PROCEEDING: {
+					this.stateChanged(Status.COMPLETED);
 					this.last_response = response;
 					this.J = setTimeout(() => {
 						this.timer_J();
@@ -440,7 +558,7 @@ class NonInviteServerTransaction extends EventEmitter {
 					}
 					break;
 				}
-				case C.STATUS_COMPLETED: {
+				case Status.COMPLETED: {
 					break;
 				}
 			}
@@ -448,19 +566,40 @@ class NonInviteServerTransaction extends EventEmitter {
 	}
 }
 
-class InviteServerTransaction extends EventEmitter {
-	constructor(ua, transport, request) {
+export class InviteServerTransaction extends EventEmitter {
+	type: Type;
+	id: string;
+	ua: TransactionUA;
+	transport: Transport;
+	request: SIPMessage.IncomingRequest;
+	last_response: string;
+	state: Status;
+	resendProvisionalTimer: ReturnType<typeof setInterval> | null;
+
+	/* NOTE: Not set by the constructor. `transportError` is set by
+	 * `onTransportError()` and the timer handles when their timers are armed.
+	 */
+	transportError?: boolean;
+	H?: ReturnType<typeof setTimeout>;
+	I?: ReturnType<typeof setTimeout>;
+	L?: ReturnType<typeof setTimeout>;
+
+	constructor(
+		ua: TransactionUA,
+		transport: Transport,
+		request: SIPMessage.IncomingRequest
+	) {
 		super();
 
-		this.type = C.INVITE_SERVER;
-		this.id = request.via_branch;
+		this.type = Type.INVITE_SERVER;
+		this.id = request.via_branch!;
 		this.ua = ua;
 		this.transport = transport;
 		this.request = request;
 		this.last_response = '';
 		request.server_transaction = this;
 
-		this.state = C.STATUS_PROCEEDING;
+		this.state = Status.PROCEEDING;
 
 		ua.newTransaction(this);
 
@@ -469,42 +608,38 @@ class InviteServerTransaction extends EventEmitter {
 		request.reply(100);
 	}
 
-	get C() {
-		return C;
-	}
-
-	stateChanged(state) {
+	stateChanged(state: Status): void {
 		this.state = state;
 		this.emit('stateChanged');
 	}
 
-	timer_H() {
+	timer_H(): void {
 		loggerist.debug(`Timer H expired for transaction ${this.id}`);
 
-		if (this.state === C.STATUS_COMPLETED) {
+		if (this.state === Status.COMPLETED) {
 			loggerist.debug('ACK not received, dialog will be terminated');
 		}
 
-		this.stateChanged(C.STATUS_TERMINATED);
+		this.stateChanged(Status.TERMINATED);
 		this.ua.destroyTransaction(this);
 	}
 
-	timer_I() {
-		this.stateChanged(C.STATUS_TERMINATED);
+	timer_I(): void {
+		this.stateChanged(Status.TERMINATED);
 		this.ua.destroyTransaction(this);
 	}
 
 	// RFC 6026 7.1.
-	timer_L() {
+	timer_L(): void {
 		loggerist.debug(`Timer L expired for transaction ${this.id}`);
 
-		if (this.state === C.STATUS_ACCEPTED) {
-			this.stateChanged(C.STATUS_TERMINATED);
+		if (this.state === Status.ACCEPTED) {
+			this.stateChanged(Status.TERMINATED);
 			this.ua.destroyTransaction(this);
 		}
 	}
 
-	onTransportError() {
+	onTransportError(): void {
 		if (!this.transportError) {
 			this.transportError = true;
 
@@ -521,22 +656,27 @@ class InviteServerTransaction extends EventEmitter {
 			clearTimeout(this.H);
 			clearTimeout(this.I);
 
-			this.stateChanged(C.STATUS_TERMINATED);
+			this.stateChanged(Status.TERMINATED);
 			this.ua.destroyTransaction(this);
 		}
 	}
 
-	resend_provisional() {
+	resend_provisional(): void {
 		if (!this.transport.send(this.last_response)) {
 			this.onTransportError();
 		}
 	}
 
 	// INVITE Server Transaction RFC 3261 17.2.1.
-	receiveResponse(status_code, response, onSuccess, onFailure) {
+	receiveResponse(
+		status_code: number,
+		response: string,
+		onSuccess?: () => void,
+		onFailure?: () => void
+	): void {
 		if (status_code >= 100 && status_code <= 199) {
 			switch (this.state) {
-				case C.STATUS_PROCEEDING: {
+				case Status.PROCEEDING: {
 					if (!this.transport.send(response)) {
 						this.onTransportError();
 					}
@@ -549,7 +689,7 @@ class InviteServerTransaction extends EventEmitter {
 		if (
 			status_code > 100 &&
 			status_code <= 199 &&
-			this.state === C.STATUS_PROCEEDING
+			this.state === Status.PROCEEDING
 		) {
 			// Trigger the resendProvisionalTimer only for the first non 100 provisional response.
 			if (this.resendProvisionalTimer === null) {
@@ -558,21 +698,30 @@ class InviteServerTransaction extends EventEmitter {
 				}, Timers.PROVISIONAL_RESPONSE_INTERVAL);
 			}
 		} else if (status_code >= 200 && status_code <= 299) {
-			switch (this.state) {
-				case C.STATUS_PROCEEDING: {
-					this.stateChanged(C.STATUS_ACCEPTED);
-					this.last_response = response;
-					this.L = setTimeout(() => {
-						this.timer_L();
-					}, Timers.TIMER_L);
+			/* NOTE: The original implementation lets the `Status.PROCEEDING`
+			 * case fall through into the `Status.ACCEPTED` one. TypeScript's
+			 * `noFallthroughCasesInSwitch` forbids that, so the proceeding part
+			 * is guarded by the state read before entering the switch, which is
+			 * exactly when the original evaluates the switch discriminant.
+			 */
+			const was_proceeding = this.state === Status.PROCEEDING;
 
-					if (this.resendProvisionalTimer !== null) {
-						clearInterval(this.resendProvisionalTimer);
-						this.resendProvisionalTimer = null;
+			switch (this.state) {
+				case Status.PROCEEDING:
+				case Status.ACCEPTED: {
+					if (was_proceeding) {
+						this.stateChanged(Status.ACCEPTED);
+						this.last_response = response;
+						this.L = setTimeout(() => {
+							this.timer_L();
+						}, Timers.TIMER_L);
+
+						if (this.resendProvisionalTimer !== null) {
+							clearInterval(this.resendProvisionalTimer);
+							this.resendProvisionalTimer = null;
+						}
 					}
-				}
-				// falls through
-				case C.STATUS_ACCEPTED: {
+
 					// Note that this point will be reached for proceeding this.state also.
 					if (!this.transport.send(response)) {
 						this.onTransportError();
@@ -587,7 +736,7 @@ class InviteServerTransaction extends EventEmitter {
 			}
 		} else if (status_code >= 300 && status_code <= 699) {
 			switch (this.state) {
-				case C.STATUS_PROCEEDING: {
+				case Status.PROCEEDING: {
 					if (this.resendProvisionalTimer !== null) {
 						clearInterval(this.resendProvisionalTimer);
 						this.resendProvisionalTimer = null;
@@ -599,7 +748,7 @@ class InviteServerTransaction extends EventEmitter {
 							onFailure();
 						}
 					} else {
-						this.stateChanged(C.STATUS_COMPLETED);
+						this.stateChanged(Status.COMPLETED);
 						this.H = setTimeout(() => {
 							this.timer_H();
 						}, Timers.TIMER_H);
@@ -632,22 +781,28 @@ class InviteServerTransaction extends EventEmitter {
  *  _true_  retransmission
  *  _false_ new request
  */
-function checkTransaction({ _transactions }, request) {
-	let tr;
-
+export function checkTransaction(
+	{ _transactions }: { _transactions: TransactionRegistry },
+	request: SIPMessage.IncomingRequest
+): boolean | undefined {
+	/* NOTE: The original implementation uses a single `let tr` declared before
+	 * the switch. It is declared per case here so that each one gets the
+	 * matching transaction type; the variable was never read across cases.
+	 */
 	switch (request.method) {
 		case JsSIP_C.INVITE: {
-			tr = _transactions.ist[request.via_branch];
+			const tr = _transactions.ist[request.via_branch!];
+
 			if (tr) {
 				switch (tr.state) {
-					case C.STATUS_PROCEEDING: {
+					case Status.PROCEEDING: {
 						tr.transport.send(tr.last_response);
 						break;
 					}
 
 					// RFC 6026 7.1 Invite retransmission.
-					// Received while in C.STATUS_ACCEPTED state. Absorb it.
-					case C.STATUS_ACCEPTED: {
+					// Received while in Status.ACCEPTED state. Absorb it.
+					case Status.ACCEPTED: {
 						break;
 					}
 				}
@@ -657,14 +812,14 @@ function checkTransaction({ _transactions }, request) {
 			break;
 		}
 		case JsSIP_C.ACK: {
-			tr = _transactions.ist[request.via_branch];
+			const tr = _transactions.ist[request.via_branch!];
 
 			// RFC 6026 7.1.
 			if (tr) {
-				if (tr.state === C.STATUS_ACCEPTED) {
+				if (tr.state === Status.ACCEPTED) {
 					return false;
-				} else if (tr.state === C.STATUS_COMPLETED) {
-					tr.state = C.STATUS_CONFIRMED;
+				} else if (tr.state === Status.COMPLETED) {
+					tr.state = Status.CONFIRMED;
 					tr.I = setTimeout(() => {
 						tr.timer_I();
 					}, Timers.TIMER_I);
@@ -679,10 +834,11 @@ function checkTransaction({ _transactions }, request) {
 			break;
 		}
 		case JsSIP_C.CANCEL: {
-			tr = _transactions.ist[request.via_branch];
+			const tr = _transactions.ist[request.via_branch!];
+
 			if (tr) {
 				request.reply_sl(200);
-				if (tr.state === C.STATUS_PROCEEDING) {
+				if (tr.state === Status.PROCEEDING) {
 					return false;
 				} else {
 					return true;
@@ -695,14 +851,15 @@ function checkTransaction({ _transactions }, request) {
 		}
 		default: {
 			// Non-INVITE Server Transaction RFC 3261 17.2.2.
-			tr = _transactions.nist[request.via_branch];
+			const tr = _transactions.nist[request.via_branch!];
+
 			if (tr) {
 				switch (tr.state) {
-					case C.STATUS_TRYING: {
+					case Status.TRYING: {
 						break;
 					}
-					case C.STATUS_PROCEEDING:
-					case C.STATUS_COMPLETED: {
+					case Status.PROCEEDING:
+					case Status.COMPLETED: {
 						tr.transport.send(tr.last_response);
 						break;
 					}
@@ -713,14 +870,6 @@ function checkTransaction({ _transactions }, request) {
 			break;
 		}
 	}
-}
 
-module.exports = {
-	C,
-	NonInviteClientTransaction,
-	InviteClientTransaction,
-	AckClientTransaction,
-	NonInviteServerTransaction,
-	InviteServerTransaction,
-	checkTransaction,
-};
+	return undefined;
+}

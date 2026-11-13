@@ -1,4 +1,4 @@
-const Logger = require('./Logger');
+const { Logger } = require('./Logger');
 const SIPMessage = require('./SIPMessage');
 const JsSIP_C = require('./Constants');
 const Transactions = require('./Transactions');
@@ -334,12 +334,10 @@ module.exports = class Dialog {
 
 				const stateChanged = () => {
 					if (
+						request.server_transaction.state === Transactions.Status.ACCEPTED ||
 						request.server_transaction.state ===
-							Transactions.C.STATUS_ACCEPTED ||
-						request.server_transaction.state ===
-							Transactions.C.STATUS_COMPLETED ||
-						request.server_transaction.state ===
-							Transactions.C.STATUS_TERMINATED
+							Transactions.Status.COMPLETED ||
+						request.server_transaction.state === Transactions.Status.TERMINATED
 					) {
 						request.server_transaction.removeListener(
 							'stateChanged',
@@ -357,7 +355,7 @@ module.exports = class Dialog {
 			if (request.hasHeader('contact')) {
 				request.server_transaction.on('stateChanged', () => {
 					if (
-						request.server_transaction.state === Transactions.C.STATUS_ACCEPTED
+						request.server_transaction.state === Transactions.Status.ACCEPTED
 					) {
 						this._remote_target = request.parseHeader('contact').uri;
 					}
@@ -368,7 +366,7 @@ module.exports = class Dialog {
 			if (request.hasHeader('contact')) {
 				request.server_transaction.on('stateChanged', () => {
 					if (
-						request.server_transaction.state === Transactions.C.STATUS_COMPLETED
+						request.server_transaction.state === Transactions.Status.COMPLETED
 					) {
 						this._remote_target = request.parseHeader('contact').uri;
 					}

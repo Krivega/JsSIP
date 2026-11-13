@@ -3,7 +3,7 @@
 
 const EventEmitter = require('events').EventEmitter;
 const sdp_transform = require('sdp-transform');
-const Logger = require('./Logger');
+const { Logger } = require('./Logger');
 const JsSIP_C = require('./Constants');
 const Exceptions = require('./Exceptions');
 const Transactions = require('./Transactions');
@@ -11,7 +11,7 @@ const Utils = require('./Utils');
 const Timers = require('./Timers');
 const SIPMessage = require('./SIPMessage');
 const Dialog = require('./Dialog');
-const RequestSender = require('./RequestSender');
+const { RequestSender } = require('./RequestSender');
 const RTCSession_DTMF = require('./RTCSession/DTMF');
 const RTCSession_Info = require('./RTCSession/Info');
 const RTCSession_ReferNotifier = require('./RTCSession/ReferNotifier');
@@ -1029,7 +1029,7 @@ module.exports = class RTCSession extends EventEmitter {
 					this._status === C.STATUS_WAITING_FOR_ACK &&
 					this._direction === 'incoming' &&
 					this._request.server_transaction.state !==
-						Transactions.C.STATUS_TERMINATED
+						Transactions.Status.TERMINATED
 				) {
 					// Save the dialog for later restoration.
 					const dialog = this._dialog;
@@ -1053,7 +1053,7 @@ module.exports = class RTCSession extends EventEmitter {
 					this._request.server_transaction.on('stateChanged', () => {
 						if (
 							this._request.server_transaction.state ===
-							Transactions.C.STATUS_TERMINATED
+							Transactions.Status.TERMINATED
 						) {
 							this.sendRequest(JsSIP_C.BYE, {
 								extraHeaders,

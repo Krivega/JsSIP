@@ -5,9 +5,9 @@ const RTCSession = require('../RTCSession.js');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const Dialog = require('../Dialog.js');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const Transactions = require('../Transactions.js');
+const Transactions = require('../Transactions');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const URI = require('../URI.js');
+const URI = require('../URI');
 
 type TDialogFixture = {
 	_ua: object;
@@ -276,7 +276,7 @@ const createCompetingOffer = (
 ): TCompetingOffer => {
 	const stateChangedListeners: Set<() => void> = new Set();
 	const serverTransaction = {
-		state: Transactions.C.STATUS_PROCEEDING,
+		state: Transactions.Status.PROCEEDING,
 		on: jest.fn((event: string, listener: () => void) => {
 			if (event === 'stateChanged') {
 				stateChangedListeners.add(listener);
@@ -640,7 +640,7 @@ describe('RTCSession local offer recovery after 491', () => {
 
 		const incomingReinvite = createCompetingOffer(
 			'INVITE',
-			Transactions.C.STATUS_ACCEPTED
+			Transactions.Status.ACCEPTED
 		);
 
 		// Route the competing offer through Dialog and RTCSession to create its answer.
@@ -723,7 +723,7 @@ describe('RTCSession local offer recovery after 491', () => {
 
 		const incomingUpdate = createCompetingOffer(
 			'UPDATE',
-			Transactions.C.STATUS_COMPLETED
+			Transactions.Status.COMPLETED
 		);
 
 		// Process the peer's UPDATE while the local request is waiting to retry.
@@ -963,7 +963,7 @@ describe('RTCSession renegotiation waiting for a ready session', () => {
 		});
 
 		dialog.receiveRequest(
-			createCompetingOffer('INVITE', Transactions.C.STATUS_ACCEPTED)
+			createCompetingOffer('INVITE', Transactions.Status.ACCEPTED)
 		);
 
 		const renegotiation = RTCSession.prototype.renegotiate.call(session);

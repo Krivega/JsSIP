@@ -5,7 +5,7 @@ const DialogRequestSender = require('../Dialog/RequestSender.js');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const Dialog = require('../Dialog.js');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const URI = require('../URI.js');
+const URI = require('../URI');
 
 type TIncomingReinvite = {
 	body: string;
