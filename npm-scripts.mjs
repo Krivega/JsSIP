@@ -216,12 +216,13 @@ function buildTypescript() {
 
 	// Copy manual .d.ts files to lib/ until code is moved to TS and declaration files
 	// are automatically created.
-	executeCmd("cpx 'src/**/**.d.ts' lib/");
+	// Double quotes: cmd.exe on Windows passes single quotes through literally.
+	executeCmd('cpx "src/**/**.d.ts" lib/');
 
 	// Preserve the published 8.x declarations during the internal TS migration.
 	// The generated declarations expose implementation details and stricter
 	// signatures that require a major version for existing consumers.
-	executeCmd("cpx 'types/*.d.ts' lib/");
+	executeCmd('cpx "types/*.d.ts" lib/');
 }
 
 function testPublicTypes() {

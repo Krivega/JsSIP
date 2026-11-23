@@ -69,14 +69,31 @@ export interface RejectOptions extends ExtraHeaders {
 	reason_phrase?: string;
 }
 
+/**
+ * Handlers for the final response to the BYE sent by `terminate()`.
+ * Authentication challenges (401/407) are retried internally first when the UA has
+ * credentials (password or ha1); otherwise the challenge reaches `onErrorResponse`.
+ * In the incoming branch deferred until ACK, JsSIP may later send a duplicate BYE
+ * when the INVITE transaction terminates; its response is reported to these handlers too.
+ */
+export interface ByeEventHandlers {
+	onSuccessResponse?: (response: IncomingResponse) => void;
+	onErrorResponse?: (response: IncomingResponse) => void;
+	onRequestTimeout?: VoidFunction;
+	onTransportError?: VoidFunction;
+	onDialogError?: (response: IncomingResponse) => void;
+}
+
 export interface TerminateOptions extends RejectOptions {
 	body?: string;
 	cause?: `${causes}` | string;
+	byeEventHandlers?: ByeEventHandlers;
 }
 
 export interface TerminateAsyncOptions extends RejectOptions {
 	body?: string;
 	cause?: `${causes}` | string;
+	byeEventHandlers?: ByeEventHandlers;
 }
 
 export interface ReferOptions extends ExtraHeaders {

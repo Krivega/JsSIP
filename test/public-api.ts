@@ -3,7 +3,11 @@ import {
 	IncomingResponse,
 	NameAddrHeader,
 	URI,
+	type ByeEventHandlers,
+	type RTCSession,
 	type Socket,
+	type TerminateAsyncOptions,
+	type TerminateOptions,
 	type WebSocketInterface,
 } from '../lib/JsSIP';
 
@@ -39,4 +43,26 @@ export function useLegacyPublicApi(socket: Socket): {
 	const header: string = response.getHeader('Reason');
 
 	return { request, response, user, displayName, header, websocket };
+}
+
+export function terminateWithByeEventHandlers(
+	session: RTCSession,
+	onFinalResponse: (response: IncomingResponse) => void,
+	onNoResponse: () => void
+): Promise<void> {
+	const byeEventHandlers: ByeEventHandlers = {
+		onSuccessResponse: onFinalResponse,
+		onErrorResponse: onFinalResponse,
+		onDialogError: onFinalResponse,
+		onRequestTimeout: onNoResponse,
+		onTransportError: onNoResponse,
+	};
+	const terminateOptions: TerminateOptions = { byeEventHandlers };
+	const terminateAsyncOptions: TerminateAsyncOptions = { byeEventHandlers };
+
+	// @ts-expect-error BYE response handlers must be functions.
+	session.terminate({ byeEventHandlers: { onSuccessResponse: 200 } });
+	session.terminate(terminateOptions);
+
+	return session.terminateAsync(terminateAsyncOptions);
 }

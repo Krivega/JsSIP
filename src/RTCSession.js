@@ -935,6 +935,7 @@ module.exports = class RTCSession extends EventEmitter {
 		const cause = options.cause || JsSIP_C.causes.BYE;
 		const extraHeaders = Utils.cloneArray(options.extraHeaders);
 		const eventHandlers = Utils.cloneObject(options.eventHandlers);
+		const byeEventHandlers = options.byeEventHandlers;
 		const body = options.body;
 
 		let cancel_reason;
@@ -1040,6 +1041,7 @@ module.exports = class RTCSession extends EventEmitter {
 							this.sendRequest(JsSIP_C.BYE, {
 								extraHeaders,
 								body,
+								eventHandlers: byeEventHandlers,
 							});
 							dialog.terminate();
 
@@ -1058,6 +1060,7 @@ module.exports = class RTCSession extends EventEmitter {
 							this.sendRequest(JsSIP_C.BYE, {
 								extraHeaders,
 								body,
+								eventHandlers: byeEventHandlers,
 							});
 							dialog.terminate();
 
@@ -1078,6 +1081,7 @@ module.exports = class RTCSession extends EventEmitter {
 					this.sendRequest(JsSIP_C.BYE, {
 						extraHeaders,
 						body,
+						eventHandlers: byeEventHandlers,
 					});
 
 					this._ended('local', null, cause);
