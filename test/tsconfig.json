@@ -1,0 +1,12 @@
+{
+	"extends": "../tsconfig.json",
+	"compilerOptions": {
+		"rootDir": "..",
+		"noEmit": true,
+		"declaration": false,
+		"declarationMap": false,
+		"skipLibCheck": false
+	},
+	"include": ["public-api.ts"],
+	"exclude": []
+}

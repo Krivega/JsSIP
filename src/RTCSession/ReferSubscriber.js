@@ -1,5 +1,5 @@
 const EventEmitter = require('events').EventEmitter;
-const Logger = require('../Logger');
+const { Logger } = require('../Logger');
 const JsSIP_C = require('../Constants');
 const Grammar = require('../Grammar');
 const Utils = require('../Utils');
@@ -53,7 +53,7 @@ module.exports = class ReferSubscriber extends EventEmitter {
 				header.toLowerCase().startsWith('referred-by:')
 			)
 		) {
-			const referredBy = `Referred-By: <${this._session._ua._configuration.uri._scheme}:${this._session._ua._configuration.uri._user}@${this._session._ua._configuration.uri._host}>`;
+			const referredBy = `Referred-By: <${this._session._ua._configuration.uri.scheme}:${this._session._ua._configuration.uri.user}@${this._session._ua._configuration.uri.host}>`;
 
 			extraHeaders.push(referredBy);
 		}

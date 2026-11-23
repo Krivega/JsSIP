@@ -1,7 +1,7 @@
 /* eslint-disable no-invalid-this */
 
 const EventEmitter = require('events').EventEmitter;
-const Logger = require('./Logger');
+const { Logger } = require('./Logger');
 const JsSIP_C = require('./Constants');
 const Registrator = require('./Registrator');
 const RTCSession = require('./RTCSession');
@@ -10,14 +10,14 @@ const Notifier = require('./Notifier');
 const Message = require('./Message');
 const Options = require('./Options');
 const Transactions = require('./Transactions');
-const Transport = require('./Transport');
+const { Transport } = require('./Transport');
 const Utils = require('./Utils');
 const Exceptions = require('./Exceptions');
 const URI = require('./URI');
 const Parser = require('./Parser');
 const SIPMessage = require('./SIPMessage');
-const sanityCheck = require('./sanityCheck');
-const config = require('./Config');
+const { sanityCheck } = require('./sanityCheck');
+const config = require('./Configuration');
 
 const logger = new Logger('UA');
 
@@ -68,7 +68,7 @@ module.exports = class UA extends EventEmitter {
 			credentials: {},
 		};
 
-		this._configuration = Object.assign({}, config.settings);
+		this._configuration = Object.assign({}, config.DEFAULT_CONFIGURATION);
 		this._dynConfiguration = {};
 		this._dialogs = {};
 
@@ -266,7 +266,7 @@ module.exports = class UA extends EventEmitter {
 	 *
 	 * -param {String} target
 	 * -param {String} [body]
-	 * -param {Object} [options]
+	 * -param {Object} [options] (supports options.timeout in milliseconds)
 	 *
 	 * -throws {TypeError}
 	 *
@@ -933,7 +933,12 @@ module.exports = class UA extends EventEmitter {
 		logger.debug('configuration parameters after validation:');
 		for (const parameter in this._configuration) {
 			// Only show the user user configurable parameters.
-			if (Object.prototype.hasOwnProperty.call(config.settings, parameter)) {
+			if (
+				Object.prototype.hasOwnProperty.call(
+					config.DEFAULT_CONFIGURATION,
+					parameter
+				)
+			) {
 				switch (parameter) {
 					case 'uri':
 					case 'registrar_server': {

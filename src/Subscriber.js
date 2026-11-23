@@ -1,11 +1,11 @@
 const EventEmitter = require('events').EventEmitter;
 const Exceptions = require('./Exceptions');
-const Logger = require('./Logger');
+const { Logger } = require('./Logger');
 const JsSIP_C = require('./Constants');
 const Utils = require('./Utils');
 const Grammar = require('./Grammar');
 const SIPMessage = require('./SIPMessage');
-const RequestSender = require('./RequestSender');
+const { RequestSender } = require('./RequestSender');
 const Dialog = require('./Dialog');
 
 const logger = new Logger('Subscriber');

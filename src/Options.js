@@ -1,9 +1,9 @@
 const EventEmitter = require('events').EventEmitter;
-const Logger = require('./Logger');
+const { Logger } = require('./Logger');
 const JsSIP_C = require('./Constants');
 const SIPMessage = require('./SIPMessage');
 const Utils = require('./Utils');
-const RequestSender = require('./RequestSender');
+const { RequestSender } = require('./RequestSender');
 const Exceptions = require('./Exceptions');
 
 const logger = new Logger('Options');
@@ -79,6 +79,7 @@ module.exports = class Options extends EventEmitter {
 		}
 
 		const request_sender = new RequestSender(this._ua, this._request, {
+			requestTimeout: options.timeout,
 			onRequestTimeout: () => {
 				this._onRequestTimeout();
 			},
